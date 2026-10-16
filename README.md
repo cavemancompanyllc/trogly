@@ -22,7 +22,7 @@ Plarium Global Ltd.
 3. In that folder, start Claude Code and run:
 
    ```text
-   claude plugin marketplace add <this repo>
+   claude plugin marketplace add cavemancompanyllc/trogly
    claude plugin install trogly-core@trogly --scope project
    ```
 
