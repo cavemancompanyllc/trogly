@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "trogly",
+  "description": "Trogly: talk to your RAID: Shadow Legends account in Claude Code. A fan project, not affiliated with Plarium.",
+  "owner": {
+    "name": "Mike",
+    "email": "admin@cavemancompany.co"
+  },
+  "plugins": [
+    {
+      "name": "trogly-core",
+      "source": "./plugins/trogly-core",
+      "description": "Account access: refresh from the running game, search champions and artifacts, see one champion's gear and calculated stats. The foundation the other Trogly plugins build on.",
+      "version": "0.1.0",
+      "category": "gaming"
+    }
+  ]
+}

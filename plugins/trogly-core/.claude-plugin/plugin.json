@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "trogly-core",
+  "version": "0.1.0",
+  "description": "Talk to your RAID: Shadow Legends account. Reads your roster through the Trogly Agent (read-only) and answers questions about champions, gear, and resources.",
+  "author": {
+    "name": "Mike",
+    "email": "admin@cavemancompany.co"
+  },
+  "homepage": "https://trog.ly",
+  "license": "MIT",
+  "keywords": ["raid-shadow-legends", "gaming", "roster"],
+  "userConfig": {
+    "agent_path": {
+      "type": "file",
+      "title": "Trogly Agent",
+      "description": "Full path to Trogly.Agent.exe (install the Agent first).",
+      "required": true
+    }
+  }
+}
