@@ -198,6 +198,97 @@ class Knowledge:
                 "affinity_matchup": affinity_matchup(champion_type["affinity"]),
                 "skills": [view for skill_id in champion_type["skill_ids"] if (view := self._skill_view(skill_id))]}
 
+    # Team building
+
+    def team_candidates(
+        self,
+        location: str,
+        stage: int,
+        difficulty: str = "",
+        min_stars: int = 6,
+        limit: int = 40,
+        home: Path | None = None,
+    ) -> dict[str, Any]:
+        """The stage's facts plus every owned champion who could fit, with what matters for picking a team."""
+        found = self.find_stage(location, stage, difficulty)
+        if found.get("ambiguous") or "boss_kits" not in found:
+            return found
+        boss = found["boss_kits"][0] if found["boss_kits"] else None
+        boss_affinity = boss["affinity"] if boss else ""
+        matchup = affinity_matchup(boss_affinity) if boss else None
+        roster = _owned_roster(home or instance_home())
+
+        candidates = []
+        for type_id, copies in roster.items():
+            best = copies[0]
+            champion_type = self.types.get(type_id)
+            if not champion_type or not champion_type.get("name") or best["stars"] < min_stars:
+                continue
+            affinity = champion_type["affinity"]
+            hits = "normal"
+            if matchup and affinity in matchup["strong_hits_from"]:
+                hits = "strong"
+            elif matchup and affinity in matchup["weak_hits_from"]:
+                hits = "weak"
+            candidates.append({
+                "champion": champion_type["name"],
+                "id": best["id"],
+                "stars": best["stars"],
+                "level": best["level"],
+                "awakening": best["awakening"],
+                "affinity": affinity,
+                "hits_on_boss": hits,
+                "role": champion_type["role"],
+                "stats": best["stats"],
+                "kit": self._kit_summary(champion_type),
+            })
+
+        order = {"strong": 0, "normal": 1, "weak": 2}
+        candidates.sort(key=lambda c: (order[c["hits_on_boss"]], -(c["awakening"] or 0), -c["stars"], -c["level"], c["champion"]))
+        limit = max(1, min(int(limit), 200))
+        return {
+            "place": found["place"],
+            "difficulty": found["difficulty"],
+            "stage": found["stage"],
+            "team_size": found["champion_slots"],
+            "waves": found["waves"],
+            "stage_modifiers": found["stage_modifiers"],
+            "boss": boss,
+            "candidates_total": len(candidates),
+            "candidates": candidates[:limit],
+            "note": (
+                "hits_on_boss comes from the affinity wheel against the boss. Stats are Trogly's calculated stats "
+                "(not yet verified in game). Kit summaries come from the game's skill data; read boss.skills "
+                "passives for immunities and counters before picking."
+            ),
+        }
+
+    def _kit_summary(self, champion_type: dict[str, Any]) -> dict[str, Any]:
+        buffs, debuffs, abilities, scaling = set(), set(), set(), set()
+        skills = []
+        for skill_id in champion_type["skill_ids"]:
+            skill = self.skills.get(str(skill_id))
+            if not skill or not skill.get("name"):
+                continue
+            for effect in skill["effects"]:
+                kind = effect["kind"]
+                if kind == "ApplyBuff":
+                    buffs.update(status_name(s["name"]) for s in effect["statuses"])
+                elif kind == "ApplyDebuff":
+                    debuffs.update(status_name(s["name"]) for s in effect["statuses"])
+                elif kind in ABILITY_KINDS:
+                    abilities.add(ABILITY_KINDS[kind])
+                if kind in DAMAGE_KINDS and effect.get("multiplier"):
+                    scaling.update(_scaling_of(effect["multiplier"]))
+            skills.append({"name": skill["name"], "cooldown": skill["cooldown"] or None})
+        return {
+            "skills": skills,
+            "damage_scales_with": sorted(scaling),
+            "buffs_allies": sorted(buffs),
+            "debuffs_enemies": sorted(debuffs),
+            "other": sorted(abilities),
+        }
+
     # Helpers
 
     def _skill_view(self, skill_id: int) -> dict[str, Any] | None:
@@ -263,6 +354,74 @@ class Knowledge:
         amount = f"{value:+g}" if modifier["absolute"] else f"{value * 100:+g}%"
         who = "boss" if modifier["boss_only"] else "all enemies"
         return f"{who}: {stat} {amount} (wave {modifier['wave']})"
+
+
+ABILITY_KINDS = {
+    "Heal": "heal",
+    "Revive": "revive",
+    "RemoveDebuff": "cleanse debuffs",
+    "TransferDebuff": "transfer debuffs",
+    "RemoveBuff": "remove enemy buffs",
+    "StealBuff": "steal enemy buffs",
+    "IncreaseStamina": "fill ally turn meter",
+    "ReduceStamina": "reduce enemy turn meter",
+    "ExtraTurn": "extra turn",
+    "ReduceCooldown": "reduce ally cooldowns",
+    "IncreaseCooldown": "increase enemy cooldowns",
+    "IncreaseBuffLifetime": "extend ally buffs",
+    "ReduceBuffLifetime": "shorten enemy buffs",
+    "IncreaseDebuffLifetime": "extend enemy debuffs",
+    "ReduceDebuffLifetime": "shorten ally debuffs",
+    "TeamAttack": "ally attack",
+    "DestroyHp": "destroy enemy max HP",
+    "Detonate": "detonate debuffs",
+    "DetonateContinuousDamage": "detonate poisons",
+    "PassiveCounterattack": "counterattack",
+    "PassiveReflectDamage": "reflect damage",
+    "IgnoreDefenceModifier": "ignore enemy DEF",
+    "ChangeDefenceModifier": "ignore enemy DEF",
+    "SwapHealth": "swap HP",
+}
+
+# Formula variables for the attacker's own stats, and the ones that read the target's HP.
+OWN_STAT_VARIABLES = {"ATK": "ATK", "DEF": "DEF", "HP": "HP", "SPD": "SPD"}
+TARGET_HP_VARIABLES = ("TRG_HP", "REL_TRG_HP", "TRG_MAX_HP")
+
+
+def _scaling_of(formula: str) -> set[str]:
+    tokens = set(re.findall(r"[A-Z_]{2,}", formula))
+    scaling = {label for variable, label in OWN_STAT_VARIABLES.items() if variable in tokens}
+    if any(variable in tokens for variable in TARGET_HP_VARIABLES):
+        scaling.add("enemy HP")
+    return scaling
+
+
+def _owned_roster(home: Path) -> dict[int, list[dict[str, Any]]]:
+    """Owned champions by type, best copy first, with awakening and calculated stats."""
+    path = home / STATE_RELATIVE_PATH
+    if not path.exists():
+        raise TroglyError("No account data yet. Refresh the account with trogly-core's refresh_account first.")
+    with path.open(encoding="utf-8") as handle:
+        state = json.load(handle)
+    roster: dict[int, list[dict[str, Any]]] = {}
+    for champion in state.get("champions") or []:
+        total = (champion.get("calculated_stats") or {}).get("total") or {}
+        stats = {}
+        for key, label in (("health", "HP"), ("attack", "ATK"), ("defence", "DEF"), ("speed", "SPD"),
+                           ("accuracy", "ACC"), ("resistance", "RES")):
+            if key in total:
+                stats[label] = round(total[key])
+        for key, label in (("critical_chance", "C.RATE"), ("critical_damage", "C.DMG")):
+            if key in total:
+                stats[label] = f"{round(total[key] * 100)}%"
+        roster.setdefault(champion.get("type_id"), []).append({
+            "id": champion.get("id"), "stars": champion.get("stars", 0), "level": champion.get("level", 0),
+            "awakening": champion.get("awakening_level", 0), "gear_pieces": len(champion.get("equipped_artifact_ids") or {}),
+            "stats": stats,
+        })
+    for copies in roster.values():
+        copies.sort(key=lambda c: (-c["stars"], -c["level"], -(c["awakening"] or 0), -c["gear_pieces"]))
+    return roster
 
 
 def export_knowledge(home: Path) -> dict[str, Any]:

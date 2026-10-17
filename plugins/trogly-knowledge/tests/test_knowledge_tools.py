@@ -131,3 +131,25 @@ def test_boss_kit_says_who_hits_it_hard(knowledge):
     _, k = knowledge
     matchup = k.find_stage("Phantom Shogun", 20)["boss_kits"][0]["affinity_matchup"]
     assert matchup["strong_hits_from"] == ["Spirit"] and matchup["weak_hits_from"] == ["Magic"]
+
+
+def test_team_candidates_rank_by_affinity_against_the_boss_and_summarise_kits(knowledge):
+    home, k = knowledge
+    result = k.team_candidates("Phantom Shogun", 20, home=home)
+    assert result["team_size"] == 5
+    assert result["boss"]["affinity"] == "Force"
+    # Fayne is Void (normal hits on Force); Thor is Magic (weak hits on Force), so Fayne ranks first.
+    assert [(c["champion"], c["hits_on_boss"]) for c in result["candidates"]] == [("Fayne", "normal"), ("Thor Faehammer", "weak")]
+    thor = result["candidates"][1]["kit"]
+    assert thor["damage_scales_with"] == ["ATK"]
+    assert thor["debuffs_enemies"] == ["Decrease Speed 30%"]
+
+
+def test_team_candidates_respect_min_stars(knowledge):
+    home, k = knowledge
+    assert k.team_candidates("Phantom Shogun", 20, min_stars=7, home=home)["candidates"] == []
+
+
+def test_scaling_reads_own_stats_and_enemy_hp():
+    assert knowledge_tools._scaling_of("3.2*ATK+0.1*TRG_HP") == {"ATK", "enemy HP"}
+    assert knowledge_tools._scaling_of("4*DEF") == {"DEF"}

@@ -27,6 +27,7 @@ Plarium Global Ltd.
    claude plugin install trogly-core@trogly --scope project
    claude plugin install trogly-artifacts@trogly --scope project
    claude plugin install trogly-knowledge@trogly --scope project
+   claude plugin install trogly-dungeons@trogly --scope project
    ```
 
 4. Open RAID, then ask Trogly to refresh your account. The first time, Trogly asks where you installed
@@ -42,7 +43,9 @@ Plarium Global Ltd.
 
 | `trogly-knowledge` | RAID facts from the game itself: "What does Thor's A3 do?", "Which of my champions place Decrease DEF?", "What's in Phantom Shogun 20?" (enemies, boss skills, boss stat boosts). Installs `trogly-core` too |
 
-More are planned: dungeon team building and arena teams.
+| `trogly-dungeons` | Team building: "Help me beat Phantom Shogun 20" reads the boss kit and boosts, works out what the fight needs, and picks a team from your champions with reasons. Installs the plugins it uses |
+
+Arena teams are planned.
 
 ## Privacy
 
