@@ -27,7 +27,7 @@ def champion_type(type_id, name, skill_ids, leader_skills=(), affinity="Magic", 
 KNOWLEDGE = {
     "exported_at": "2026-10-17T00:00:00+00:00",
     "battle": {"stamina_by_tick": 0.06999999983236194, "stamina_to_turn": 100},
-    "owned_type_ids": [1, 2, 3, 4],
+    "owned_type_ids": [1, 2, 3, 4, 5],
     "champion_types": [
         champion_type(1, "Speedy", [11, 12], [{"stat": "Speed", "absolute": False, "amount": 0.3, "area": "Arena",
                                                "affinity": None, "faction": None}]),
@@ -35,6 +35,7 @@ KNOWLEDGE = {
         champion_type(3, "Booster", [31, 32, 33], [{"stat": "Speed", "absolute": False, "amount": 0.19, "area": None,
                                                     "affinity": None, "faction": None}]),
         champion_type(4, "Twin", [41]),
+        champion_type(5, "Charger", [51, 52]),
     ],
     "skills": {
         "11": skill("Quick Jab"),
@@ -46,6 +47,8 @@ KNOWLEDGE = {
                     targets="AliveAllies", bonuses=[("Damage", 0.1), ("Cooldown", 1), ("Cooldown", 1)]),
         "33": skill("Lucky [P]", 0, [effect("IncreaseStamina", "Producer", "0.1*MAX_STAMINA", condition="isAllyTurn")]),
         "41": skill("Copy"),
+        "51": skill("Stick"),
+        "52": skill("Charge", 5, [effect("ApplyBuff", statuses=[("IncreaseSpeed30", 2)])], targets="AliveAllies"),
     },
     "regions": [],
 }
@@ -62,6 +65,7 @@ STATE = {"champions": [
     champion("2", 2, "Slowpoke", 100),
     champion("3", 3, "Booster", 150, levels={"32": 3}),
     champion("4", 4, "Twin", 200),
+    champion("5", 5, "Charger", 99, base_speed=98),
 ]}
 
 
@@ -145,7 +149,7 @@ def test_turn_meter_fill_and_speed_buff_change_the_order(knowledge):
     # Slowpoke had 75 after 9 ticks; +30 takes it past 100, so it moves on the very next tick instead of tick 13.
     assert (boosted["turns"][2]["champion"], boosted["turns"][2]["tick"]) == ("Slowpoke", 10)
     speedy_next = next(t for t in boosted["turns"][2:] if t["champion"] == "Speedy")
-    assert speedy_next["spd"] == 249  # 219 + 30% of base 100
+    assert speedy_next["spd"] == 284.7  # 219 + 30% of 219: the buff scales battle SPD, not base SPD
 
 
 def test_turn_meter_reduction_lands_on_enemies(knowledge):
@@ -184,7 +188,7 @@ def test_arena_candidates_fastest_first_with_aura_and_turn_meter_skills(knowledg
     home, k = knowledge
     result = k.arena_candidates("tag", home=home)
     names = [c["champion"] for c in result["candidates"]]
-    assert names[:2] == ["Speedy", "Twin"] and names[-1] == "Slowpoke"
+    assert names[:2] == ["Speedy", "Twin"] and names[-2:] == ["Slowpoke", "Charger"]
     speedy = result["candidates"][0]
     assert speedy["aura"] == [{"aura": "SPD +30% in Arena", "works_in_arena": True}]
     booster = next(c for c in result["candidates"] if c["champion"] == "Booster")
@@ -193,6 +197,31 @@ def test_arena_candidates_fastest_first_with_aura_and_turn_meter_skills(knowledg
     assert any("three teams of 3" in rule for rule in result["rules"])
     with pytest.raises(TroglyError):
         k.arena_candidates("live", home=home)
+
+
+def test_replays_a_real_arena_fight_turn_for_turn(knowledge):
+    # Classic Arena on the burner account, 2026-10-17, read from the game's battle state with Agent --watch-battle:
+    # our Corvis 113, Hope 128, Kael 109, Tagoar 99 (A2: Increase SPD 30% on all allies) against Kael 123,
+    # Warpriest 104, Bogwalker 103.65 (their Sniper died before acting, so it is left out).
+    home, k = knowledge
+    team = [
+        {"champion": "Twin", "speed": 113, "priority": ["A1"]},
+        {"champion": "Slowpoke", "speed": 128},
+        {"champion": "Speedy", "speed": 109, "priority": ["A1"]},
+        {"champion": "Charger"},
+    ]
+    enemies = [{"name": "Their Kael", "speed": 123}, {"name": "Warpriest", "speed": 104}, {"name": "Bogwalker", "speed": 103.65}]
+    # The game matches for 8 turns; after that its Kael's A2 filled his turn meter 25% for killing the Sniper, which
+    # depends on kills and is reported as not simulated.
+    result = k.speed_tune(team, area="Arena", enemies=enemies, turns=8, home=home)
+    assert [(t["champion"], t["tick"]) for t in result["turns"]] == [
+        ("Slowpoke", 12), ("Their Kael", 13), ("Twin", 14), ("Speedy", 15), ("Warpriest", 16), ("Bogwalker", 17),
+        ("Charger", 18), ("Slowpoke", 22),
+    ]
+    # In game after the buff: Corvis 146.9, Hope 166.4, Kael 141.7, Tagoar 128.7.
+    assert result["turns"][7]["spd"] == 166.4
+    assert result["turns"][7]["turn_meters_after"] == pytest.approx({
+        "Twin": 72.8, "Slowpoke": 0.0, "Speedy": 62.6, "Charger": 36.0, "Their Kael": 77.5, "Warpriest": 43.7, "Bogwalker": 36.3})
 
 
 def test_old_knowledge_file_asks_for_a_refresh(knowledge):

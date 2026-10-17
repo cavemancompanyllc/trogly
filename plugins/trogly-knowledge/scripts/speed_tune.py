@@ -21,7 +21,8 @@ from typing import Any
 
 ONE = 1 << 32
 
-# Increase/Decrease SPD buffs and debuffs change SPD by this share of the champion's base SPD.
+# Increase/Decrease SPD buffs and debuffs change SPD by this share of the champion's battle SPD (gear and aura included),
+# measured in game: Increase SPD 30% took 113 SPD to 146.9 (base SPD 99), Decrease SPD 15% took 113 to 96.05.
 SPEED_STATUSES = {"IncreaseSpeed15": 0.15, "IncreaseSpeed30": 0.30, "DecreaseSpeed15": -0.15, "DecreaseSpeed30": -0.30}
 
 # Where an aura works: one with no area works everywhere; the game treats its three arenas as one.
@@ -113,7 +114,7 @@ class Fighter:
     turns_taken: int = 0
 
     def speed_now(self) -> int:
-        bonus = sum(mul(self.base_speed, to_raw(SPEED_STATUSES[name])) for name in self.statuses if name in SPEED_STATUSES)
+        bonus = sum(mul(self.speed, to_raw(SPEED_STATUSES[name])) for name in self.statuses if name in SPEED_STATUSES)
         return max(self.speed + bonus, 0)
 
 
@@ -453,7 +454,7 @@ def speed_tune(knowledge: Any, roster: dict[str, Any], team: list[dict[str, Any]
         "rules": [
             "Turn meter grows by SPD x 0.07 per tick; at 100 the fullest champion acts and drops to 0 (game code).",
             "Ties between teams go to the player's team; ties within a team go to slot order (game code).",
-            "Increase SPD / Decrease SPD change SPD by 15% or 30% of base SPD; buffs tick down at the end of the holder's turn, including the turn they were placed on themselves.",
+            "Increase SPD / Decrease SPD change SPD by 15% or 30% of the champion's battle SPD, gear and aura included (measured in game); buffs tick down at the end of the holder's turn, including the turn they were placed on themselves.",
             "Each champion uses the first skill in its priority list that is off cooldown; cooldowns count down at the start of the champion's turn. Without a priority list: A4, A3, A2 (revives after the others), then A1.",
             "Nobody dies, so revives only do their other effects; effects with a condition or a chance under 100% on your own team are left out.",
             "SPD is Trogly's calculated SPD (not yet checked against the game's champion screen) plus the leader's SPD aura where it works.",
