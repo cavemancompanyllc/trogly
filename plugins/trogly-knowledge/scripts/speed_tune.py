@@ -112,6 +112,8 @@ class Fighter:
     cooldowns: dict[str, int] = field(default_factory=dict)
     statuses: dict[str, int] = field(default_factory=dict)
     turns_taken: int = 0
+    # Buffs this champion placed on itself during its current turn: they don't count down at the end of that turn.
+    placed_this_turn: set[str] = field(default_factory=set)
 
     def speed_now(self) -> int:
         bonus = sum(mul(self.speed, to_raw(SPEED_STATUSES[name])) for name in self.statuses if name in SPEED_STATUSES)
@@ -313,10 +315,15 @@ class SpeedTune:
         skill = next((s for label in actor.priority for s in actor.skills if s.label == label and actor.cooldowns.get(label, 0) == 0),
                      actor.skills[0] if actor.skills else None)
         spd_at_turn = actor.speed_now()
+        actor.placed_this_turn = set()
         effects = self.use_skill(actor, skill, fighters, priority) if skill else []
         if skill and skill.cooldown:
             actor.cooldowns[skill.label] = skill.cooldown
+        # Buffs count down at the end of the holder's turn, except ones it placed on itself this turn (measured in
+        # game: Tagoar's own Increase SPD lasted through his next two turns, like everyone else's).
         for name in list(actor.statuses):
+            if name in actor.placed_this_turn:
+                continue
             actor.statuses[name] -= 1
             if actor.statuses[name] <= 0:
                 del actor.statuses[name]
@@ -376,6 +383,8 @@ class SpeedTune:
             for status in statuses:
                 for target in targets:
                     target.statuses[status["name"]] = max(target.statuses.get(status["name"], 0), int(status["turns"]))
+                    if target is actor:
+                        actor.placed_this_turn.add(status["name"])
                 done.append(f"{status['name']} ({status['turns']} turns): {names}")
         return done
 
@@ -455,7 +464,7 @@ def speed_tune(knowledge: Any, roster: dict[str, Any], team: list[dict[str, Any]
         "rules": [
             "Turn meter grows by SPD x 0.07 per tick; at 100 the fullest champion acts and drops to 0 (game code).",
             "Ties between teams go to the player's team; ties within a team go to slot order (game code).",
-            "Increase SPD / Decrease SPD change SPD by 15% or 30% of the champion's battle SPD, gear and aura included (measured in game); buffs tick down at the end of the holder's turn, including the turn they were placed on themselves.",
+            "Increase SPD / Decrease SPD change SPD by 15% or 30% of the champion's battle SPD, gear and aura included (measured in game); a buff lasts through the holder's next N turns after it was placed (it counts down at the end of each of the holder's turns, but not the turn a champion placed it on itself; measured in game).",
             "Each champion uses the first skill in its priority list that is off cooldown; cooldowns count down at the start of the champion's turn. Without a priority list: A4, A3, A2 (revives after the others), then A1.",
             "Nobody dies, so revives only do their other effects; effects with a condition or a chance under 100% on your own team are left out.",
             "SPD is Trogly's calculated SPD (not yet checked against the game's champion screen) plus the leader's SPD aura where it works.",

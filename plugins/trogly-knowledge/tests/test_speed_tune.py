@@ -224,6 +224,15 @@ def test_replays_a_real_arena_fight_turn_for_turn(knowledge):
         "Twin": 72.8, "Slowpoke": 0.0, "Speedy": 62.6, "Charger": 36.0, "Their Kael": 77.5, "Warpriest": 43.7, "Bogwalker": 36.3})
 
 
+def test_a_buff_placed_on_yourself_lasts_through_your_next_two_turns(knowledge):
+    # Measured in game: Tagoar's own Increase SPD (2 turns) was still on him after his next turn. It doesn't count
+    # down at the end of the turn he placed it, so it covers his next two turns.
+    home, k = knowledge
+    result = k.speed_tune([{"champion": "Charger"}], area="", turns=4, home=home)
+    assert [t["skill"] for t in result["turns"]] == ["A2 Charge", "A1 Stick", "A1 Stick", "A1 Stick"]
+    assert [t["spd"] for t in result["turns"]] == [99, 128.7, 128.7, 99]
+
+
 def test_old_knowledge_file_asks_for_a_refresh(knowledge):
     home, k = knowledge
     k.raw.pop("battle")
