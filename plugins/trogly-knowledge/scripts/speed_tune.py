@@ -150,7 +150,8 @@ class SpeedTune:
         fighters = []
         for slot, entry, champion in members:
             champion_type = self.knowledge.types.get(champion["type_id"]) or {}
-            total = (champion.get("calculated_stats") or {}).get("total") or {}
+            # Battles use unrounded stats ("precise"); "total" is the champion screen's rounded figure.
+            total = (champion.get("calculated_stats") or {}).get("precise") or (champion.get("calculated_stats") or {}).get("total") or {}
             base = (champion.get("calculated_stats") or {}).get("base") or {}
             if "speed" not in total or "speed" not in base:
                 raise SpeedTuneError(f"{champion['name']} has no calculated stats. Refresh the account first.")
