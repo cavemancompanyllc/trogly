@@ -33,13 +33,13 @@ Plarium Global Ltd.
 
 | Plugin | What it adds |
 | --- | --- |
-| `trogly-core` | Account access: refresh, search champions and artifacts, one champion's gear and calculated stats |
+| `trogly-core` | Account access (refresh, search champions and artifacts, one champion's gear and calculated stats) and memory (goals, saved teams, saved gear loadouts, notes, and "what changed since..." history) |
 
 More are planned: gear optimisation, champion and dungeon knowledge, dungeon teams, and arena teams.
 
 ## Privacy
 
-Your account data stays in your instance folder. Trogly sends nothing anywhere except your normal Claude
+Your account data, history, and plans stay in your instance folder (`data/`). Trogly sends nothing anywhere except your normal Claude
 conversation.
 
 ## Known limits

@@ -218,12 +218,12 @@ class AccountState:
         return {
             "snapshot": self.snapshot(),
             "total_matches": len(matches),
-            "champions": [self._champion_row(c) for c in matches[:limit]],
+            "champions": [self.champion_row(c) for c in matches[:limit]],
             "note": CALCULATED_NOTE,
         }
 
     def get_champion(self, name_or_id: str) -> dict[str, Any]:
-        candidates = self._resolve_champion(name_or_id)
+        candidates = self.resolve_champion(name_or_id)
         if not candidates:
             raise TroglyError(f"No champion matches '{name_or_id}'. Try find_champions to search by part of the name.")
         if len(candidates) > 1:
@@ -231,7 +231,7 @@ class AccountState:
                 "snapshot": self.snapshot(),
                 "ambiguous": True,
                 "message": f"{len(candidates)} champions match '{name_or_id}'. Ask which one, or pass its id.",
-                "candidates": [self._champion_row(c) for c in candidates[:DEFAULT_LIMIT]],
+                "candidates": [self.champion_row(c) for c in candidates[:DEFAULT_LIMIT]],
             }
         champion = candidates[0]
         gear = []
@@ -239,11 +239,11 @@ class AccountState:
         for slot in sorted(equipped, key=lambda s: SLOT_ORDER.index(s) if s in SLOT_ORDER else len(SLOT_ORDER)):
             artifact = self.artifacts_by_id.get(equipped[slot])
             if artifact:
-                gear.append(self._artifact_detail(artifact, include_owner=False))
+                gear.append(self.artifact_detail(artifact, include_owner=False))
         set_counts = Counter(set_name(a["set"]) for a in (self.artifacts_by_id.get(i) for i in equipped.values()) if a and a.get("set") not in (None, "None"))
         return {
             "snapshot": self.snapshot(),
-            **self._champion_row(champion),
+            **self.champion_row(champion),
             "awakening_level": champion.get("awakening_level"),
             "empower_level": champion.get("empower_level"),
             "blessing_id": champion.get("blessing_id") or None,
@@ -289,10 +289,10 @@ class AccountState:
         return {
             "snapshot": self.snapshot(),
             "total_matches": len(matches),
-            "artifacts": [self._artifact_detail(a, include_owner=True) for a in matches[:limit]],
+            "artifacts": [self.artifact_detail(a, include_owner=True) for a in matches[:limit]],
         }
 
-    def _resolve_champion(self, name_or_id: str) -> list[dict[str, Any]]:
+    def resolve_champion(self, name_or_id: str) -> list[dict[str, Any]]:
         key = name_or_id.strip().lower()
         by_id = [c for c in self.champions if c.get("id") == key]
         if by_id:
@@ -303,7 +303,7 @@ class AccountState:
             return _by_progress(exact)
         return [c for c in self.champions if key in c.get("name", "").lower()]
 
-    def _champion_row(self, champion: dict[str, Any]) -> dict[str, Any]:
+    def champion_row(self, champion: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": champion.get("id"),
             "name": champion.get("name"),
@@ -314,7 +314,7 @@ class AccountState:
             "stats": _stat_block((champion.get("calculated_stats") or {}).get("total")),
         }
 
-    def _artifact_detail(self, artifact: dict[str, Any], include_owner: bool) -> dict[str, Any]:
+    def artifact_detail(self, artifact: dict[str, Any], include_owner: bool) -> dict[str, Any]:
         detail = {
             "id": artifact.get("id"),
             "slot": SLOT_NAMES.get(artifact.get("slot", ""), artifact.get("slot")),
