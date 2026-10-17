@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "trogly-artifacts",
+  "version": "0.1.0",
+  "description": "Gear advice for RAID: Shadow Legends: finds the best artifacts for a champion from your own inventory under stat and set targets, with exact stats. Needs trogly-core.",
+  "author": {
+    "name": "Mike",
+    "email": "admin@cavemancompany.co"
+  },
+  "homepage": "https://trog.ly",
+  "license": "MIT",
+  "keywords": ["raid-shadow-legends", "gaming", "gear", "optimizer"],
+  "dependencies": ["trogly-core"]
+}

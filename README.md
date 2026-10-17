@@ -13,7 +13,8 @@ Plarium Global Ltd.
 - Windows, with RAID installed and logged in on the same PC
 - [Claude Code](https://claude.com/claude-code) on a Claude Pro or Max plan (no API key needed)
 - Python 3.11 or newer
-- The Trogly Agent (`Trogly.Agent.exe`), installed yourself
+- The Trogly Agent (`Trogly.Agent.exe`), installed yourself. Keep it as new as the plugins: an older Agent answers
+  newer requests with an error saying so
 
 ## Set up
 
@@ -24,6 +25,7 @@ Plarium Global Ltd.
    ```text
    claude plugin marketplace add cavemancompanyllc/trogly
    claude plugin install trogly-core@trogly --scope project
+   claude plugin install trogly-artifacts@trogly --scope project
    ```
 
 4. Open RAID, then ask Trogly to refresh your account. The first time, Trogly asks where you installed
@@ -35,7 +37,9 @@ Plarium Global Ltd.
 | --- | --- |
 | `trogly-core` | Account access (refresh, search champions and artifacts, one champion's gear and calculated stats, "what if they wore this" stats) and memory (goals, saved teams, saved gear loadouts, notes, and "what changed since..." history) |
 
-More are planned: gear optimisation, champion and dungeon knowledge, dungeon teams, and arena teams.
+| `trogly-artifacts` | Gear advice: "Which artifacts should I put on Thor? At least 200 speed, then max attack." Finds the best loadout from your own artifacts (vault and the champion's own gear by default; borrowing from other champions only if you allow it), with exact stats. Installs `trogly-core` too |
+
+More are planned: champion and dungeon knowledge, dungeon teams, and arena teams.
 
 ## Privacy
 

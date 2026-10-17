@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "trogly-artifacts": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/artifacts_mcp.py"],
+      "env": {
+        "TROGLY_HOME": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}
