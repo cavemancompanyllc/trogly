@@ -16,41 +16,14 @@ from pathlib import Path
 from typing import Any
 
 STATE_RELATIVE_PATH = Path("data") / "state" / "trogly-state.json"
+CONFIG_RELATIVE_PATH = Path("data") / "config.json"
+AGENT_FILE_NAME = "Trogly.Agent.exe"
 REFRESH_TIMEOUT_SECONDS = 300
 STALE_AFTER_MINUTES = 30
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 200
 
 RARITY_NAMES = {1: "Common", 2: "Uncommon", 3: "Rare", 4: "Epic", 5: "Legendary", 6: "Mythical"}
-
-# In-game names for the set codes the game stores. Codes not listed are shown split into words.
-SET_NAMES = {
-    "AccuracyAndSpeed": "Perception",
-    "AttackPowerAndIgnoreDefense": "Cruel",
-    "IgnoreDefense": "Savage",
-    "AttackSpeed": "Speed",
-    "Hp": "Life",
-    "AttackPower": "Offense",
-    "Defense": "Defense",
-    "CriticalChance": "Critical Rate",
-    "CriticalDamage": "Critical Damage",
-    "Accuracy": "Accuracy",
-    "LifeDrain": "Lifesteal",
-    "DecreaseMaxHp": "Destroy",
-    "GetExtraTurn": "Relentless",
-    "CounterattackOnCrit": "Retaliation",
-    "StunChance": "Stun",
-    "SleepChance": "Daze",
-    "ProvokeChance": "Taunting",
-    "HpAndHeal": "Immortal",
-    "Heal": "Regeneration",
-    "CritRateAndIgnoreDefMultiplier": "Lethal",
-    "AttackAndCritRate": "Fatal",
-    "Shield": "Shield",
-    "ChangeHitType": "Affinitybreaker",
-    "CooldownReductionChance": "Reflex",
-    "StoneSkinHpResDef": "Stoneskin",
-}
 
 SLOT_NAMES = {"Cloak": "Amulet"}
 SLOT_ORDER = ["Weapon", "Helmet", "Shield", "Gloves", "Chest", "Boots", "Ring", "Cloak", "Banner"]
@@ -101,11 +74,12 @@ def state_path(home: Path | None = None) -> Path:
     return (home or instance_home()) / STATE_RELATIVE_PATH
 
 
-def set_name(code: str) -> str:
+def set_name(code: str, game_name: str = "") -> str:
+    """The set's in-game name when the Agent supplied one, else the game's set code split into words."""
     if not code or code == "None":
         return "No set"
-    if code in SET_NAMES:
-        return SET_NAMES[code]
+    if game_name:
+        return game_name
     words = []
     for char in code:
         if char.isupper() and words and not words[-1].endswith(" "):
@@ -240,7 +214,6 @@ class AccountState:
             artifact = self.artifacts_by_id.get(equipped[slot])
             if artifact:
                 gear.append(self.artifact_detail(artifact, include_owner=False))
-        set_counts = Counter(set_name(a["set"]) for a in (self.artifacts_by_id.get(i) for i in equipped.values()) if a and a.get("set") not in (None, "None"))
         return {
             "snapshot": self.snapshot(),
             **self.champion_row(champion),
@@ -251,7 +224,7 @@ class AccountState:
             "locked": champion.get("locked"),
             "in_storage": champion.get("in_storage"),
             "base_stats": _stat_block((champion.get("calculated_stats") or {}).get("base")),
-            "set_pieces": dict(set_counts.most_common()),
+            "sets": [_set_status(entry) for entry in (champion.get("calculated_stats") or {}).get("sets") or []],
             "gear": gear,
             "stat_warnings": (champion.get("calculated_stats") or {}).get("warnings") or [],
             "note": CALCULATED_NOTE,
@@ -270,7 +243,10 @@ class AccountState:
         matches = list(self.artifacts_by_id.values())
         if set_code:
             wanted = set_code.lower()
-            matches = [a for a in matches if wanted in (a.get("set", "").lower(), set_name(a.get("set", "")).lower())]
+            matches = [
+                a for a in matches
+                if wanted in (a.get("set", "").lower(), set_name(a.get("set", ""), a.get("set_name", "")).lower())
+            ]
         if slot:
             wanted_slot = {"amulet": "cloak"}.get(slot.lower(), slot.lower())
             matches = [a for a in matches if a.get("slot", "").lower() == wanted_slot]
@@ -318,7 +294,7 @@ class AccountState:
         detail = {
             "id": artifact.get("id"),
             "slot": SLOT_NAMES.get(artifact.get("slot", ""), artifact.get("slot")),
-            "set": set_name(artifact.get("set", "")),
+            "set": set_name(artifact.get("set", ""), artifact.get("set_name", "")),
             "rarity": rarity_name(artifact.get("rarity", 0)),
             "rank": artifact.get("rank"),
             "level": artifact.get("level"),
@@ -331,16 +307,44 @@ class AccountState:
         return detail
 
 
+def set_agent_path(path: str, home: Path | None = None) -> dict[str, Any]:
+    """Saves where the player installed the Trogly Agent, after checking the file is there."""
+    agent = Path(path.strip().strip('"'))
+    if agent.is_dir():
+        agent = agent / AGENT_FILE_NAME
+    if not agent.is_file():
+        raise TroglyError(f"There is no Trogly Agent at {agent}. Give the full path to {AGENT_FILE_NAME} or its folder.")
+    config = _load_config(home)
+    config["agent_path"] = str(agent.resolve())
+    config_path = (home or instance_home()) / CONFIG_RELATIVE_PATH
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return {"agent_path": config["agent_path"], "saved": True}
+
+
+def configured_agent_path(home: Path | None = None) -> str:
+    """The Agent path: TROGLY_AGENT_PATH if set (for testing), else the one saved with set_agent_path."""
+    return os.environ.get("TROGLY_AGENT_PATH") or _load_config(home).get("agent_path", "")
+
+
+def _load_config(home: Path | None) -> dict[str, Any]:
+    path = (home or instance_home()) / CONFIG_RELATIVE_PATH
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def refresh_account(agent_path: str, home: Path | None = None) -> dict[str, Any]:
     """Runs the Trogly Agent once to read RAID's memory into the instance's state file."""
     if not agent_path:
         raise TroglyError(
-            "The Trogly Agent path is not set. Install the Agent, then set the plugin's agent_path option to "
-            "Trogly.Agent.exe."
+            f"Trogly doesn't know where the Agent is yet. Ask the player for the folder where they installed "
+            f"{AGENT_FILE_NAME}, then call set_agent_path."
         )
     agent = Path(agent_path)
     if not agent.exists():
-        raise TroglyError(f"The Trogly Agent was not found at {agent}. Check the plugin's agent_path option.")
+        raise TroglyError(f"The Trogly Agent is no longer at {agent}. Ask the player where it is now and call set_agent_path.")
     output = state_path(home)
     output.parent.mkdir(parents=True, exist_ok=True)
     command = ["dotnet", "run", "--project", str(agent), "--"] if agent.suffix == ".csproj" else [str(agent)]
@@ -371,6 +375,24 @@ def refresh_account(agent_path: str, home: Path | None = None) -> dict[str, Any]
             "received, so this refresh can be older than it looks. Ask the user if anything seems out of date."
         ),
     }
+
+
+def _set_status(entry: dict[str, Any]) -> dict[str, Any]:
+    status = {
+        "set": entry.get("name") or set_name(entry.get("set", "")),
+        "pieces": entry.get("pieces"),
+        "active": entry.get("active"),
+        "active_bonus_stats": entry.get("active_stats") or [],
+        "skill_effect_active": entry.get("skill_effect", False),
+        "description": entry.get("bonus") or None,
+    }
+    if entry.get("series"):
+        status["kind"] = "variable set: the bonus grows with each piece"
+    elif entry.get("active"):
+        status["full_sets"] = entry.get("active_level")
+    if entry.get("next_bonus_at"):
+        status["next_bonus_at_pieces"] = entry["next_bonus_at"]
+    return status
 
 
 def _parse_time(value: str) -> datetime:

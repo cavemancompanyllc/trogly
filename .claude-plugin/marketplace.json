@@ -11,7 +11,7 @@
       "name": "trogly-core",
       "source": "./plugins/trogly-core",
       "description": "Account access and memory: refresh from the running game, search champions and artifacts, see one champion's gear and calculated stats, plus goals, saved teams, saved loadouts, notes, and account history. The foundation the other Trogly plugins build on.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "gaming"
     }
   ]

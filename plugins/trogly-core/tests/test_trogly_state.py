@@ -23,6 +23,13 @@ STATE = {
                 "base": {"health": 15690, "speed": 105, "critical_chance": 0.15},
                 "total": {"health": 45859, "attack": 4940, "speed": 125, "critical_chance": 1.26, "critical_damage": 1.79},
                 "verified": False, "warnings": [],
+                "sets": [
+                    {"set": "IgnoreDefense", "name": "Savage", "pieces": 1, "active": False, "active_level": 0,
+                     "next_bonus_at": 4, "series": False, "bonus": "4 Set: ...", "active_stats": [], "skill_effect": False},
+                    {"set": "IncreaseAccuracyAndSpeedWithInterceptBuff", "name": "Pinpoint", "pieces": 1, "active": True,
+                     "active_level": 1, "next_bonus_at": 2, "series": True, "bonus": "Variable Set...",
+                     "active_stats": ["Accuracy +20"], "skill_effect": False},
+                ],
             },
         },
         {"id": "7", "name": "Kael", "level": 50, "stars": 5, "rarity": 3, "equipped_artifact_ids": {},
@@ -30,12 +37,12 @@ STATE = {
         {"id": "8", "name": "Kael", "level": 30, "stars": 3, "rarity": 3, "equipped_artifact_ids": {}},
     ],
     "artifacts": [
-        {"id": "1", "set": "IgnoreDefense", "slot": "Weapon", "rarity": 5, "rank": 6, "level": 16,
+        {"id": "1", "set": "IgnoreDefense", "set_name": "Savage", "slot": "Weapon", "rarity": 5, "rank": 6, "level": 16,
          "primary_stat": {"stat": "Attack", "value": 265, "is_absolute": True},
          "substats": [{"stat": "CriticalChance", "value": 0.12, "is_absolute": False, "glyph": 0.01}]},
-        {"id": "2", "set": "AttackSpeed", "slot": "Boots", "rarity": 4, "rank": 6, "level": 16,
+        {"id": "2", "set": "AttackSpeed", "set_name": "Speed", "slot": "Boots", "rarity": 4, "rank": 6, "level": 16,
          "primary_stat": {"stat": "Speed", "value": 45, "is_absolute": True}, "substats": []},
-        {"id": "3", "set": "AttackSpeed", "slot": "Boots", "rarity": 3, "rank": 5, "level": 12,
+        {"id": "3", "set": "AttackSpeed", "set_name": "Speed", "slot": "Boots", "rarity": 3, "rank": 5, "level": 12,
          "primary_stat": {"stat": "Speed", "value": 35, "is_absolute": True}, "substats": []},
         {"id": "4", "set": "HpResSpdChronoBuffScalingWithStacks", "slot": "Chest", "rarity": 3, "rank": 5, "level": 8,
          "primary_stat": {"stat": "Attack", "value": 0.25, "is_absolute": False}, "substats": []},
@@ -76,7 +83,11 @@ def test_get_champion_returns_gear_in_slot_order_with_set_names(home):
     assert thor["gear"][0]["set"] == "Savage"
     assert thor["gear"][0]["substats"] == ["C.RATE 12% (+1% glyph)"]
     assert thor["stats"]["C.RATE"] == "126%"
-    assert thor["set_pieces"] == {"Savage": 1, "Speed": 1}
+    savage, pinpoint = thor["sets"]
+    assert savage == {"set": "Savage", "pieces": 1, "active": False, "active_bonus_stats": [],
+                      "skill_effect_active": False, "description": "4 Set: ...", "next_bonus_at_pieces": 4}
+    assert pinpoint["active_bonus_stats"] == ["Accuracy +20"]
+    assert pinpoint["kind"].startswith("variable set")
 
 
 def test_get_champion_with_two_copies_asks_which(home):
@@ -106,10 +117,26 @@ def test_find_artifacts_percent_main_stat(home):
     assert [a["id"] for a in result["artifacts"]] == ["4"]
 
 
-def test_unknown_set_code_is_split_into_words():
+def test_set_name_prefers_the_game_name_and_falls_back_to_the_code():
+    assert trogly_state.set_name("HpResSpdChronoBuffScalingWithStacks", "Chronophage") == "Chronophage"
     assert trogly_state.set_name("HpResSpdChronoBuffScalingWithStacks") == "Hp Res Spd Chrono Buff Scaling With Stacks"
 
 
 def test_refresh_without_agent_path_explains_setting(home):
-    with pytest.raises(TroglyError, match="agent_path"):
+    with pytest.raises(TroglyError, match="set_agent_path"):
         trogly_state.refresh_account("", home)
+
+
+def test_set_agent_path_accepts_the_folder_and_saves_the_exe(tmp_path, monkeypatch):
+    monkeypatch.delenv("TROGLY_AGENT_PATH", raising=False)
+    folder = tmp_path / "agent"
+    folder.mkdir()
+    (folder / "Trogly.Agent.exe").write_bytes(b"")
+    saved = trogly_state.set_agent_path(f'"{folder}"', tmp_path)
+    assert saved["agent_path"].endswith("Trogly.Agent.exe")
+    assert trogly_state.configured_agent_path(tmp_path) == saved["agent_path"]
+
+
+def test_set_agent_path_rejects_a_missing_file(tmp_path):
+    with pytest.raises(TroglyError, match="no Trogly Agent"):
+        trogly_state.set_agent_path(str(tmp_path / "nowhere"), tmp_path)

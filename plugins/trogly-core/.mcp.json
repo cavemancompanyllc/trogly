@@ -2,10 +2,11 @@
   "mcpServers": {
     "trogly": {
       "command": "python",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/trogly_mcp.py"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/trogly_mcp.py"
+      ],
       "env": {
-        "TROGLY_HOME": "${CLAUDE_PROJECT_DIR}",
-        "TROGLY_AGENT_PATH": "${user_config.agent_path}"
+        "TROGLY_HOME": "${CLAUDE_PROJECT_DIR}"
       }
     }
   }

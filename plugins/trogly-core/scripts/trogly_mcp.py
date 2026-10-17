@@ -8,12 +8,17 @@ session, because MCP servers don't hot-reload.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    sys.exit(
+        "Trogly needs the 'mcp' Python package for the Python that Claude Code runs. Install it with:\n"
+        f'  "{sys.executable}" -m pip install "mcp>=1.28,<2.0.0"'
+    )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trogly_state  # noqa: E402
@@ -40,11 +45,20 @@ def refresh_account() -> dict[str, Any]:
     """
 
     def refresh() -> dict[str, Any]:
-        result = trogly_state.refresh_account(os.environ.get("TROGLY_AGENT_PATH", ""))
+        result = trogly_state.refresh_account(trogly_state.configured_agent_path())
         result["history"] = with_ledger(lambda ledger: ledger.import_snapshot(AccountState.load()))
         return result
 
     return _answer(refresh)
+
+
+@mcp.tool()
+def set_agent_path(path: str) -> dict[str, Any]:
+    """Save where the player installed the Trogly Agent (Trogly.Agent.exe or the folder holding it).
+
+    Use when refresh_account says the Agent location is unknown or wrong: ask the player for the path, then call this.
+    """
+    return _answer(lambda: trogly_state.set_agent_path(path))
 
 
 @mcp.tool()

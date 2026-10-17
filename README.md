@@ -26,8 +26,8 @@ Plarium Global Ltd.
    claude plugin install trogly-core@trogly --scope project
    ```
 
-4. When asked, set **Trogly Agent** to the full path of `Trogly.Agent.exe`.
-5. Open RAID, then ask Trogly to refresh your account.
+4. Open RAID, then ask Trogly to refresh your account. The first time, Trogly asks where you installed
+   `Trogly.Agent.exe` and remembers it.
 
 ## Plugins
 
@@ -46,4 +46,5 @@ conversation.
 
 - Champion stats are calculated by Trogly and not yet verified against the in-game screen.
 - If you're logged in on your phone, the PC client gets signed out and its data stops updating.
-- A few artifact set names are shown as split-up internal codes.
+- If Trogly's tools don't show up after you fix a setup problem, Claude Code may have cached the failure: remove the
+  `plugin:trogly-core:trogly` entry from `~/.claude/mcp-needs-auth-cache.json` and restart Claude Code.
