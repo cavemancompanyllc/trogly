@@ -140,3 +140,68 @@ def test_set_agent_path_accepts_the_folder_and_saves_the_exe(tmp_path, monkeypat
 def test_set_agent_path_rejects_a_missing_file(tmp_path):
     with pytest.raises(TroglyError, match="no Trogly Agent"):
         trogly_state.set_agent_path(str(tmp_path / "nowhere"), tmp_path)
+
+
+class FakeCompleted:
+    def __init__(self, stdout):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = 0
+
+
+def fake_agent(tmp_path, monkeypatch, payload):
+    agent = tmp_path / "Trogly.Agent.exe"
+    agent.write_bytes(b"")
+    calls = []
+
+    def run(command, **_):
+        calls.append(command)
+        calls.append(json.loads(Path(command[-1]).read_text(encoding="utf-8")))
+        return FakeCompleted(json.dumps(payload))
+
+    monkeypatch.setattr(trogly_state.subprocess, "run", run)
+    return str(agent), calls
+
+
+def test_calc_stats_sends_the_request_and_formats_the_answer(home, monkeypatch):
+    payload = {
+        "champion_id": "16109", "name": "Thor Faehammer",
+        "before": {"speed": 125, "critical_chance": 1.26}, "after": {"speed": 135, "critical_chance": 1.26},
+        "change": {"speed": 10}, "sets_after": [],
+        "gear_after": [{"slot": "Weapon", "artifact_id": "1"}, {"slot": "Boots", "artifact_id": "3", "taken_from": None}],
+        "warnings": [],
+    }
+    agent, calls = fake_agent(home, monkeypatch, payload)
+    result = trogly_state.calc_stats(agent, "thor faehammer", equip=["3"], home=home)
+    assert calls[0][-2] == "--calc-stats"
+    assert calls[1] == {"champion_id": "16109", "equip": ["3"], "remove_slots": [], "only_these": False}
+    assert result["change"] == {"SPD": "+10"}
+    assert [piece["id"] for piece in result["pieces_put_on"]] == ["3"]
+    assert result["slots_emptied"] == []
+    assert result["after"]["SPD"] == 135
+
+
+def test_calc_stats_relays_agent_errors(home, monkeypatch):
+    agent, _ = fake_agent(home, monkeypatch, {"error": "artifact 404 is not on this account"})
+    with pytest.raises(TroglyError, match="404"):
+        trogly_state.calc_stats(agent, "Thor Faehammer", equip=["404"], home=home)
+
+
+def test_calc_stats_reports_emptied_slots(home, monkeypatch):
+    payload = {"champion_id": "16109", "name": "Thor Faehammer", "before": {}, "after": {}, "change": {},
+               "sets_after": [], "gear_after": [{"slot": "Weapon", "artifact_id": "1"}], "warnings": []}
+    agent, _ = fake_agent(home, monkeypatch, payload)
+    result = trogly_state.calc_stats(agent, "Thor Faehammer", remove_slots=["Boots"], home=home)
+    assert result["slots_emptied"] == ["Boots"]
+
+
+def test_calc_stats_spells_out_set_bonus_changes(home, monkeypatch):
+    pinpoint = {"set": "X", "name": "Pinpoint", "active": True, "active_stats": ["Accuracy +20"]}
+    speed_on = {"set": "AttackSpeed", "name": "Speed", "active": True, "active_stats": ["Speed +12%"]}
+    payload = {"champion_id": "16109", "name": "Thor Faehammer", "before": {}, "after": {}, "change": {},
+               "sets_before": [pinpoint, {"set": "Y", "name": "Relentless", "active": True}],
+               "sets_after": [pinpoint, speed_on], "gear_after": [], "warnings": []}
+    agent, _ = fake_agent(home, monkeypatch, payload)
+    bonuses = trogly_state.calc_stats(agent, "Thor Faehammer", home=home)["set_bonuses"]
+    assert bonuses == {"active_after": {"Pinpoint": ["Accuracy +20"], "Speed": ["Speed +12%"]},
+                       "turned_on": ["Speed"], "turned_off": ["Relentless"]}

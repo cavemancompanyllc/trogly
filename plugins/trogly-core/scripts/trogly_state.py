@@ -337,18 +337,10 @@ def _load_config(home: Path | None) -> dict[str, Any]:
 
 def refresh_account(agent_path: str, home: Path | None = None) -> dict[str, Any]:
     """Runs the Trogly Agent once to read RAID's memory into the instance's state file."""
-    if not agent_path:
-        raise TroglyError(
-            f"Trogly doesn't know where the Agent is yet. Ask the player for the folder where they installed "
-            f"{AGENT_FILE_NAME}, then call set_agent_path."
-        )
-    agent = Path(agent_path)
-    if not agent.exists():
-        raise TroglyError(f"The Trogly Agent is no longer at {agent}. Ask the player where it is now and call set_agent_path.")
+    agent = _require_agent(agent_path)
     output = state_path(home)
     output.parent.mkdir(parents=True, exist_ok=True)
-    command = ["dotnet", "run", "--project", str(agent), "--"] if agent.suffix == ".csproj" else [str(agent)]
-    command.append("--refresh-direct")
+    command = [*_agent_command(agent), "--refresh-direct"]
     environment = {**os.environ, "TROGLY_STATE_OUTPUT": str(output)}
     try:
         result = subprocess.run(
@@ -393,6 +385,120 @@ def _set_status(entry: dict[str, Any]) -> dict[str, Any]:
     if entry.get("next_bonus_at"):
         status["next_bonus_at_pieces"] = entry["next_bonus_at"]
     return status
+
+
+def calc_stats(
+    agent_path: str,
+    champion: str,
+    equip: list[str] | None = None,
+    remove_slots: list[str] | None = None,
+    only_these: bool = False,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Asks the Agent what a champion's stats would be with a gear change, using the game's live data."""
+    state = AccountState.load(home)
+    matches = state.resolve_champion(champion)
+    if not matches:
+        raise TroglyError(f"No champion matches '{champion}'. Try find_champions to search by part of the name.")
+    if len(matches) > 1 and not all(c.get("name") == matches[0].get("name") for c in matches):
+        names = ", ".join(sorted({c["name"] for c in matches})[:8])
+        raise TroglyError(f"'{champion}' matches several champions ({names}). Use the full name or the id.")
+    target = matches[0]
+    request = {
+        "champion_id": target["id"],
+        "equip": [str(artifact_id) for artifact_id in equip or []],
+        "remove_slots": list(remove_slots or []),
+        "only_these": bool(only_these),
+    }
+    result = _run_agent_json(agent_path, "--calc-stats", request, home)
+    current = target.get("equipped_artifact_ids") or {}
+    put_on = []
+    for slot in result.get("gear_after") or []:
+        if current.get(slot["slot"]) == slot["artifact_id"]:
+            continue
+        artifact = state.artifacts_by_id.get(slot["artifact_id"])
+        detail = state.artifact_detail(artifact, include_owner=False) if artifact else {"id": slot["artifact_id"]}
+        put_on.append({**detail, "taken_from": slot.get("taken_from")})
+    kept = {slot["slot"] for slot in result.get("gear_after") or []}
+    emptied = [SLOT_NAMES.get(slot, slot) for slot in current if slot not in kept]
+    return {
+        "champion": f"{result.get('name')} (id {result.get('champion_id')})",
+        "before": _stat_block(result.get("before")),
+        "after": _stat_block(result.get("after")),
+        "change": _stat_change(result.get("change") or {}),
+        "pieces_put_on": put_on,
+        "slots_emptied": emptied,
+        "set_bonuses": _set_bonus_change(result.get("sets_before") or [], result.get("sets_after") or []),
+        "sets_after": [_set_status(entry) for entry in result.get("sets_after") or []],
+        "warnings": result.get("warnings") or [],
+        "note": "Calculated from live game data with Trogly's stat calculator; not yet verified in game. "
+        "Nothing was changed in the game.",
+    }
+
+
+def _run_agent_json(agent_path: str, command: str, request: dict[str, Any], home: Path | None) -> dict[str, Any]:
+    agent = _require_agent(agent_path)
+    request_path = (home or instance_home()) / "data" / "tmp" / "agent-request.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    try:
+        completed = subprocess.run(
+            [*_agent_command(agent), command, str(request_path)],
+            capture_output=True, text=True, timeout=REFRESH_TIMEOUT_SECONDS, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise TroglyError(f"The Agent did not answer within {REFRESH_TIMEOUT_SECONDS} seconds.") from error
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        tail = "\n".join((completed.stderr or completed.stdout).strip().splitlines()[-6:])
+        raise TroglyError(f"The Agent returned something Trogly couldn't read. Is it up to date?\n{tail}") from error
+    if "error" in result:
+        raise TroglyError(result["error"])
+    return result
+
+
+def _require_agent(agent_path: str) -> Path:
+    if not agent_path:
+        raise TroglyError(
+            f"Trogly doesn't know where the Agent is yet. Ask the player for the folder where they installed "
+            f"{AGENT_FILE_NAME}, then call set_agent_path."
+        )
+    agent = Path(agent_path)
+    if not agent.exists():
+        raise TroglyError(
+            f"The Trogly Agent is no longer at {agent}. Ask the player where it is now and call set_agent_path."
+        )
+    return agent
+
+
+def _agent_command(agent: Path) -> list[str]:
+    return ["dotnet", "run", "--project", str(agent), "--"] if agent.suffix == ".csproj" else [str(agent)]
+
+
+def _set_bonus_change(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> dict[str, Any]:
+    def active(entries: list[dict[str, Any]]) -> dict[str, list[str]]:
+        return {
+            (e.get("name") or set_name(e.get("set", ""))): e.get("active_stats") or []
+            for e in entries
+            if e.get("active")
+        }
+
+    was, now = active(before), active(after)
+    return {
+        "active_after": {name: stats for name, stats in now.items()},
+        "turned_on": sorted(now.keys() - was.keys()),
+        "turned_off": sorted(was.keys() - now.keys()),
+    }
+
+
+def _stat_change(change: dict[str, Any]) -> dict[str, Any]:
+    shown = {}
+    for key, label, is_percent in CALCULATED_STATS:
+        if key in change:
+            value = float(change[key])
+            shown[label] = f"{value * 100:+.0f}%" if is_percent else f"{value:+,.0f}"
+    return shown
 
 
 def _parse_time(value: str) -> datetime:

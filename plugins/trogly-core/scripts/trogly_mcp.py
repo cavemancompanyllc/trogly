@@ -109,6 +109,22 @@ def find_artifacts(
     )
 
 
+@mcp.tool()
+def calc_stats(
+    champion: str, equip: list[str] | None = None, remove_slots: list[str] | None = None, only_these: bool = False
+) -> dict[str, Any]:
+    """What a champion's stats would be with different gear, from the game's live data (takes a few seconds).
+
+    champion: name or id. equip: artifact ids to put on (from find_artifacts or get_champion); each replaces what the
+    champion wears in that slot, and pieces worn by someone else are shown as taken from them. remove_slots: slots to
+    leave empty (Weapon, Helmet, Shield, Gloves, Chest, Boots, Ring, Amulet, Banner). only_these: wear only the
+    equip list. Returns stats before and after, the change, and set bonuses after. Use this instead of adding up
+    stats yourself; nothing changes in the game.
+    """
+    return _answer(lambda: trogly_state.calc_stats(
+        trogly_state.configured_agent_path(), champion, equip, remove_slots, only_these))
+
+
 def _with_state(action) -> dict[str, Any]:
     """Runs a ledger action with the current account loaded, recording that account read in history first."""
 

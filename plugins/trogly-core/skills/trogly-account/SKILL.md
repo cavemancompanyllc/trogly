@@ -18,6 +18,7 @@ memory of RAID in general, when the question is about this player's account.
 | "Which of my champions...", "my fastest...", "do I have..." | `find_champions` |
 | "What's on Thor?", "show me <champion>" | `get_champion` |
 | "Do I have spare speed boots?", "where is my best Savage weapon?" | `find_artifacts` |
+| "What if Thor wore these boots?", or checking a gear idea before suggesting it | `calc_stats` |
 
 ## Rules
 
@@ -25,8 +26,8 @@ memory of RAID in general, when the question is about this player's account.
    player how old the data is and offer `refresh_account` before relying on it.
 2. **Stats are calculated.** Totals come from Trogly's stat calculator and are not yet checked against the in-game
    screen. Quote them, and say once per answer that they are calculated.
-3. **Don't do stat maths in your head.** Don't add up substats to predict a new total. Trogly's what-if calculator is
-   not built yet, so say what would change qualitatively and let the player check in game.
+3. **Don't do stat maths in your head.** Before suggesting a gear change, check it with `calc_stats` and quote its
+   numbers. If a suggested piece is `taken_from` another champion, say who loses it.
 4. **Set bonuses come from the tool, not from memory.** `get_champion` returns `sets`: the in-game set name, pieces
    worn, whether it's active, the exact stats it grants now (`active_bonus_stats`), and when the next bonus unlocks.
    Variable sets give a bonus from the first piece. Never call a set incomplete or inactive unless `active` is false.

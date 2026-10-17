@@ -2,7 +2,7 @@
 
 Talk to your RAID: Shadow Legends account in [Claude Code](https://claude.com/claude-code).
 
-"What gear is on Thor Faehammer?" "Which of my Epics are fastest?" "Do I have spare Speed boots?" Trogly reads
+"What gear is on Thor Faehammer?" "Which of my Epics are fastest?" "How fast would Thor be with my spare Speed boots?" Trogly reads
 your account from the running game (read-only; it never changes anything in game) and answers in conversation.
 
 Trogly is a fan project. It is not affiliated with or endorsed by Plarium. RAID: Shadow Legends is a trademark of
@@ -33,7 +33,7 @@ Plarium Global Ltd.
 
 | Plugin | What it adds |
 | --- | --- |
-| `trogly-core` | Account access (refresh, search champions and artifacts, one champion's gear and calculated stats) and memory (goals, saved teams, saved gear loadouts, notes, and "what changed since..." history) |
+| `trogly-core` | Account access (refresh, search champions and artifacts, one champion's gear and calculated stats, "what if they wore this" stats) and memory (goals, saved teams, saved gear loadouts, notes, and "what changed since..." history) |
 
 More are planned: gear optimisation, champion and dungeon knowledge, dungeon teams, and arena teams.
 
