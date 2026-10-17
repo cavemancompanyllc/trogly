@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "trogly-knowledge": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/knowledge_mcp.py"],
+      "env": {
+        "TROGLY_HOME": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

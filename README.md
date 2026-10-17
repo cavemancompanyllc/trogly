@@ -26,6 +26,7 @@ Plarium Global Ltd.
    claude plugin marketplace add cavemancompanyllc/trogly
    claude plugin install trogly-core@trogly --scope project
    claude plugin install trogly-artifacts@trogly --scope project
+   claude plugin install trogly-knowledge@trogly --scope project
    ```
 
 4. Open RAID, then ask Trogly to refresh your account. The first time, Trogly asks where you installed
@@ -39,7 +40,9 @@ Plarium Global Ltd.
 
 | `trogly-artifacts` | Gear advice: "Which artifacts should I put on Thor? At least 200 speed, then max attack." Finds the best loadout from your own artifacts (vault and the champion's own gear by default; borrowing from other champions only if you allow it), with exact stats. Installs `trogly-core` too |
 
-More are planned: champion and dungeon knowledge, dungeon teams, and arena teams.
+| `trogly-knowledge` | RAID facts from the game itself: "What does Thor's A3 do?", "Which of my champions place Decrease DEF?", "What's in Phantom Shogun 20?" (enemies, boss skills, boss stat boosts). Installs `trogly-core` too |
+
+More are planned: dungeon team building and arena teams.
 
 ## Privacy
 

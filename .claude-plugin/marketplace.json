@@ -20,6 +20,13 @@
       "description": "Gear advice: the best artifacts for a champion from your own inventory under stat and set targets (\"SPD 200+, then max ATK\"), checked with exact stats. Installs trogly-core too.",
       "version": "0.1.0",
       "category": "gaming"
+    },
+    {
+      "name": "trogly-knowledge",
+      "source": "./plugins/trogly-knowledge",
+      "description": "RAID facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs) and every stage's enemies, boss kits, and boss stat boosts. Installs trogly-core too.",
+      "version": "0.1.0",
+      "category": "gaming"
     }
   ]
 }
