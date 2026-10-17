@@ -37,4 +37,4 @@ memory of RAID in general, when the question is about this player's account.
 ## Answer style
 
 Lead with the answer. For a champion, give the stat line, then the gear by slot (set, main stat, notable
-substats), then anything that stands out, such as missing pieces, low-rank gear, or an unfinished set.
+substats), then anything that stands out, such as missing pieces, low-rank or unlevelled gear, or crit rate over 100%.
