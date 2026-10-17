@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "trogly-knowledge",
-  "version": "0.2.0",
-  "description": "RAID: Shadow Legends facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs, damage formulas) and every stage's enemies, boss kits, and boss stat boosts. Needs trogly-core.",
+  "version": "0.3.0",
+  "description": "RAID: Shadow Legends facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs, damage formulas) and auras, every stage's enemies, boss kits, and boss stat boosts, and a speed tune simulator for a team's turn order. Needs trogly-core.",
   "author": {
     "name": "Mike",
     "email": "admin@cavemancompany.co"
@@ -13,7 +13,8 @@
     "raid-shadow-legends",
     "gaming",
     "skills",
-    "dungeons"
+    "dungeons",
+    "speed-tune"
   ],
   "dependencies": [
     "trogly-core"

@@ -67,6 +67,33 @@ def team_candidates(location: str, stage: int, difficulty: str = "", min_stars: 
 
 
 @mcp.tool()
+def arena_candidates(mode: str = "classic", min_stars: int = 5, limit: int = 60) -> dict[str, Any]:
+    """The player's champions for arena teams, fastest first. mode: classic (one team of 4) or tag (three teams of
+    3, no champion twice). Each candidate has calculated stats, its aura and whether it works in arena, its turn meter
+    and SPD skills with booked cooldowns, and a kit summary. Comes with the mode's team rules."""
+    return _answer(lambda: Knowledge.load().arena_candidates(mode, min_stars, limit))
+
+
+@mcp.tool()
+def speed_tune(
+    team: list[dict[str, Any]],
+    area: str = "Arena",
+    enemies: list[dict[str, Any]] | None = None,
+    turns: int = 12,
+) -> dict[str, Any]:
+    """Turn order for one of the player's teams, played out tick by tick the way the game does it: SPD with the
+    leader's aura, turn meter fills and reductions, Increase/Decrease SPD, extra turns, and booked cooldowns.
+
+    team: the champions in slot order, leader first, each {"champion": name or id} plus optional "priority" (skills
+    in the order the champion should use them, e.g. ["A3", "A1"]), "target" (ally for ally-target skills), and
+    "speed" (try a different SPD, e.g. after a gear change). area: where the fight is, for the aura: Arena (Classic),
+    Arena3X3 (Tag), LiveArena, Dungeon, or "" for none. enemies: optional [{"name", "speed"}] to see who moves first;
+    they only use basic attacks. turns: how many turns to play out (all sides together).
+    """
+    return _answer(lambda: Knowledge.load().speed_tune(team, area, enemies, turns))
+
+
+@mcp.tool()
 def refresh_knowledge() -> dict[str, Any]:
     """Re-read champion kits and stages from the game. Needed only after a game update or when new champions are
     pulled (kits for newly owned champions); takes a few seconds with RAID open."""

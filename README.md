@@ -28,6 +28,7 @@ Plarium Global Ltd.
    claude plugin install trogly-artifacts@trogly --scope project
    claude plugin install trogly-knowledge@trogly --scope project
    claude plugin install trogly-dungeons@trogly --scope project
+   claude plugin install trogly-arena@trogly --scope project
    ```
 
 4. Open RAID, then ask Trogly to refresh your account. The first time, Trogly asks where you installed
@@ -38,14 +39,10 @@ Plarium Global Ltd.
 | Plugin | What it adds |
 | --- | --- |
 | `trogly-core` | Account access (refresh, search champions and artifacts, one champion's gear and calculated stats, "what if they wore this" stats) and memory (goals, saved teams, saved gear loadouts, notes, and "what changed since..." history) |
-
 | `trogly-artifacts` | Gear advice: "Which artifacts should I put on Thor? At least 200 speed, then max attack." Finds the best loadout from your own artifacts (vault and the champion's own gear by default; borrowing from other champions only if you allow it), with exact stats. Installs `trogly-core` too |
-
-| `trogly-knowledge` | RAID facts from the game itself: "What does Thor's A3 do?", "Which of my champions place Decrease DEF?", "What's in Phantom Shogun 20?" (enemies, boss skills, boss stat boosts). Installs `trogly-core` too |
-
+| `trogly-knowledge` | RAID facts from the game itself: "What does Thor's A3 do?", "Which of my champions place Decrease DEF?", "What's in Phantom Shogun 20?" (enemies, boss skills, boss stat boosts), and speed tunes: "Who goes first in this team?" plays out the turn order tick by tick the way the game does, with auras, turn meter fills, SPD buffs, and booked cooldowns. Installs `trogly-core` too |
 | `trogly-dungeons` | Team building: "Help me beat Phantom Shogun 20" reads the boss kit and boosts, works out what the fight needs, and picks a team from your champions with reasons. Installs the plugins it uses |
-
-Arena teams are planned.
+| `trogly-arena` | Arena teams: "Set up my Tag Arena" or "What should my Classic Arena defence be?" picks a leader whose aura works in arena and champions whose kits work together, and checks each team's turn order with the speed tune simulator. Installs the plugins it uses |
 
 ## Privacy
 

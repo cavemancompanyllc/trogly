@@ -14,6 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import speed_tune as tuning
+
 KNOWLEDGE_RELATIVE_PATH = Path("data") / "knowledge" / "knowledge.json"
 STATE_RELATIVE_PATH = Path("data") / "state" / "trogly-state.json"
 CONFIG_RELATIVE_PATH = Path("data") / "config.json"
@@ -263,6 +265,101 @@ class Knowledge:
             ),
         }
 
+    # Arena
+
+    def arena_candidates(self, mode: str = "classic", min_stars: int = 5, limit: int = 60, home: Path | None = None) -> dict[str, Any]:
+        """The player's champions for arena teams, fastest first, with auras and turn meter skills."""
+        rules = ARENA_RULES.get(mode.strip().lower())
+        if rules is None:
+            raise TroglyError(f"Arena mode is classic or tag, not '{mode}'.")
+        state = _state(home or instance_home())
+        try:
+            tune = tuning.SpeedTune(self, state)
+        except tuning.SpeedTuneError as error:
+            raise TroglyError(str(error)) from error
+        best: dict[int, dict[str, Any]] = {}
+        for champion in state.get("champions") or []:
+            current = best.get(champion.get("type_id"))
+            key = (champion.get("stars", 0), champion.get("level", 0), champion.get("awakening_level", 0))
+            if current is None or key > (current.get("stars", 0), current.get("level", 0), current.get("awakening_level", 0)):
+                best[champion.get("type_id")] = champion
+
+        candidates = []
+        for type_id, champion in best.items():
+            champion_type = self.types.get(type_id)
+            if not champion_type or not champion_type.get("name") or champion.get("stars", 0) < min_stars:
+                continue
+            stats = _stat_view((champion.get("calculated_stats") or {}).get("total") or {})
+            auras = [self._aura_view(aura) for aura in champion_type.get("leader_skills") or []]
+            candidates.append({
+                "champion": champion_type["name"],
+                "id": champion.get("id"),
+                "stars": champion.get("stars", 0),
+                "level": champion.get("level", 0),
+                "awakening": champion.get("awakening_level", 0),
+                "affinity": champion_type["affinity"],
+                "faction": champion_type["faction"],
+                "role": champion_type["role"],
+                "stats": stats,
+                "aura": auras or None,
+                "turn_meter_skills": self._turn_meter_skills(tune, champion, champion_type),
+                "kit": self._kit_summary(champion_type),
+            })
+        candidates.sort(key=lambda c: (-(c["stats"].get("SPD") or 0), c["champion"]))
+        limit = max(1, min(int(limit), 200))
+        return {
+            "mode": mode,
+            "rules": rules,
+            "candidates_total": len(candidates),
+            "candidates": candidates[:limit],
+            "note": ("Fastest first. Stats are Trogly's calculated stats (not yet verified in game); in arena the "
+                     "leader's aura adds on top when it works there (aura.works_in_arena). turn_meter_skills use the "
+                     "champion's booked cooldowns. Check a team's turn order with speed_tune before recommending it."),
+        }
+
+    def speed_tune(self, team: list[dict[str, Any]], area: str = "Arena", enemies: list[dict[str, Any]] | None = None,
+                   turns: int = tuning.DEFAULT_TURNS, home: Path | None = None) -> dict[str, Any]:
+        state = _state(home or instance_home())
+        try:
+            return tuning.speed_tune(self, state, team, area, enemies, turns)
+        except tuning.SpeedTuneError as error:
+            raise TroglyError(str(error)) from error
+
+    @staticmethod
+    def _aura_view(aura: dict[str, Any]) -> dict[str, Any]:
+        stat = STAT_LABELS.get(aura["stat"], aura["stat"])
+        amount = f"+{round(aura['amount'])}" if aura.get("absolute") else f"+{round(aura['amount'] * 100)}%"
+        who = " ".join(filter(None, [aura.get("affinity"), aura.get("faction")]))
+        return {
+            "aura": f"{stat} {amount}{' for ' + who + ' allies' if who else ''} in {aura.get('area') or 'all battles'}",
+            "works_in_arena": tuning.aura_applies(aura, "Arena"),
+        }
+
+    def _turn_meter_skills(self, tune: Any, champion: dict[str, Any], champion_type: dict[str, Any]) -> list[str]:
+        lines = []
+        for skill in tune.skills_for(champion, champion_type):
+            parts = []
+            for effect in skill.effects:
+                target = effect.get("target") or "?"
+                if effect.get("exclude") == "Producer":
+                    target += " except self"
+                when = f" if {effect['condition']}" if effect.get("condition") else ""
+                chance = f" ({round(effect['chance'] * 100)}% chance)" if effect.get("chance") is not None and effect["chance"] < 0.999 else ""
+                if effect["kind"] in ("IncreaseStamina", "ReduceStamina"):
+                    amount = tuning.stamina_amount(effect.get("multiplier"))
+                    size = tuning.describe_amount(amount) if amount else f"by {effect.get('multiplier')}"
+                    word = "fill TM" if effect["kind"] == "IncreaseStamina" else "reduce TM"
+                    parts.append(f"{word} {size} on {target}{chance}{when}")
+                elif effect["kind"] == "ExtraTurn":
+                    parts.append(f"extra turn{chance}{when}")
+                for status in effect.get("statuses") or []:
+                    if status["name"] in tuning.SPEED_STATUSES:
+                        parts.append(f"{status_name(status['name'])} for {status['turns']} turns on {target}{chance}{when}")
+            if parts:
+                cooldown = f"cooldown {skill.cooldown}" + (f", booked from {skill.base_cooldown}" if skill.base_cooldown != skill.cooldown else "") if skill.cooldown else "no cooldown"
+                lines.append(f"{skill.label} {skill.name} ({cooldown}): {'; '.join(parts)}")
+        return lines
+
     def _kit_summary(self, champion_type: dict[str, Any]) -> dict[str, Any]:
         buffs, debuffs, abilities, scaling = set(), set(), set(), set()
         skills = []
@@ -354,6 +451,38 @@ class Knowledge:
         amount = f"{value:+g}" if modifier["absolute"] else f"{value * 100:+g}%"
         who = "boss" if modifier["boss_only"] else "all enemies"
         return f"{who}: {stat} {amount} (wave {modifier['wave']})"
+
+
+ARENA_RULES = {
+    "classic": [
+        "Classic Arena: one team of 4. The first champion leads, and only the leader's aura counts.",
+        "Your defence team is played by the game's AI when others attack it.",
+    ],
+    "tag": [
+        "Tag Arena: three teams of 3, and a champion can be in only one of them.",
+        "Each team's first champion leads it; its aura counts for that team's fight.",
+    ],
+}
+
+
+def _state(home: Path) -> dict[str, Any]:
+    path = home / STATE_RELATIVE_PATH
+    if not path.exists():
+        raise TroglyError("No account data yet. Refresh the account with trogly-core's refresh_account first.")
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _stat_view(total: dict[str, Any]) -> dict[str, Any]:
+    stats: dict[str, Any] = {}
+    for key, label in (("health", "HP"), ("attack", "ATK"), ("defence", "DEF"), ("speed", "SPD"),
+                       ("accuracy", "ACC"), ("resistance", "RES")):
+        if key in total:
+            stats[label] = round(total[key])
+    for key, label in (("critical_chance", "C.RATE"), ("critical_damage", "C.DMG")):
+        if key in total:
+            stats[label] = f"{round(total[key] * 100)}%"
+    return stats
 
 
 ABILITY_KINDS = {
