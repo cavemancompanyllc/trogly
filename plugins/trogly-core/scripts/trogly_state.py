@@ -431,7 +431,7 @@ def calc_stats(
         "set_bonuses": _set_bonus_change(result.get("sets_before") or [], result.get("sets_after") or []),
         "sets_after": [_set_status(entry) for entry in result.get("sets_after") or []],
         "warnings": result.get("warnings") or [],
-        "note": "Calculated from live game data with Trogly's stat calculator; not yet verified in game. "
+        "note": "Calculated from live game data with Trogly's stat calculator (checked against the game's champion screens and battle stats). "
         "Nothing was changed in the game.",
     }
 

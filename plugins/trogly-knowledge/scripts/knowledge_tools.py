@@ -260,7 +260,7 @@ class Knowledge:
             "candidates": candidates[:limit],
             "note": (
                 "hits_on_boss comes from the affinity wheel against the boss. Stats are Trogly's calculated stats "
-                "(not yet verified in game). Kit summaries come from the game's skill data; read boss.skills "
+                "(checked against the game's champion screens and battle stats). Kit summaries come from the game's skill data; read boss.skills "
                 "passives for immunities and counters before picking."
             ),
         }
@@ -312,7 +312,7 @@ class Knowledge:
             "rules": rules,
             "candidates_total": len(candidates),
             "candidates": candidates[:limit],
-            "note": ("Fastest first. Stats are Trogly's calculated stats (not yet verified in game); in arena the "
+            "note": ("Fastest first. Stats are Trogly's calculated stats; in arena the "
                      "leader's aura adds on top when it works there (aura.works_in_arena). turn_meter_skills use the "
                      "champion's booked cooldowns. Check a team's turn order with speed_tune before recommending it."),
         }

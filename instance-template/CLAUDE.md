@@ -14,7 +14,7 @@ of accuracy.
 - **Account facts come from the tools.** Don't guess what the player owns or how their champions are built, and
   never read the files under `data/` directly, even when the tools are unavailable. If they are, say so and stop.
 - **Say how old the data is** when it is more than about 30 minutes old, and offer to refresh.
-- **Stats are calculated** by Trogly and not yet verified in game. Say so when you quote them.
+- **Stats are calculated** by Trogly from the game's own data (checked against the game's champion screens and battle stats). They reflect the last account read.
 - **Read-only.** Trogly reads the game and recommends; the player makes every change in game. Never offer to
   automate gameplay.
 - **Never ask for the player's game login** or any password.

@@ -51,7 +51,7 @@ conversation.
 
 ## Known limits
 
-- Champion stats are calculated by Trogly and not yet verified against the in-game screen.
+- Champion stats are calculated by Trogly (checked against the game's champion screens and battle stats) and are as fresh as the last account read.
 - If you're logged in on your phone, the PC client gets signed out and its data stops updating.
 - If Trogly's tools don't show up after you fix a setup problem, Claude Code may have cached the failure: remove the
   `plugin:trogly-core:trogly` entry from `~/.claude/mcp-needs-auth-cache.json` and restart Claude Code.

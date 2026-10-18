@@ -43,7 +43,7 @@ from the tools. You decide what the fight needs and which champions cover it.
    - List the team's SPD from fastest to slowest.
    - Debuffers need high ACC. The stage's boss boosts (for example "boss: RES +270") come on top of the boss's own
      stats, so say the debuffers' ACC is a concern if it isn't well above that boost.
-   - These are calculated stats, not yet checked in game.
+   - These are Trogly's calculated stats from the last account read.
 6. **Answer:**
    - a table of champion, job, key skill (named), affinity hit, awakening, SPD, and ACC
    - two or three lines on how to play the fight (what to use first, what to avoid, what to watch)

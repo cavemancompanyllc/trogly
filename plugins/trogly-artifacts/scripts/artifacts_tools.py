@@ -43,7 +43,7 @@ SHORT_STAT = {
 SLOT_NAMES = {"Cloak": "Amulet"}
 
 NOTE = (
-    "Stats are exact from Trogly's calculator but not yet verified against the in-game screen. Nothing was changed "
+    "Stats are exact from Trogly's calculator (checked against the game's champion screens and battle stats). Nothing was changed "
     "in the game; the player moves the gear themselves."
 )
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "trogly-arena",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "RAID: Shadow Legends arena teams from your own champions: a Classic Arena team of 4 or three Tag Arena teams of 3, with the leader's aura and the turn order checked tick by tick (speed tunes) against the game's own rules. Needs trogly-core and trogly-knowledge; uses trogly-artifacts for gear follow-ups.",
   "author": {
     "name": "Mike",

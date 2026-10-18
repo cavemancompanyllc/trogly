@@ -467,7 +467,7 @@ def speed_tune(knowledge: Any, roster: dict[str, Any], team: list[dict[str, Any]
             "Increase SPD / Decrease SPD change SPD by 15% or 30% of the champion's battle SPD, gear and aura included (measured in game); a buff lasts through the holder's next N turns after it was placed (it counts down at the end of each of the holder's turns, but not the turn a champion placed it on itself; measured in game).",
             "Each champion uses the first skill in its priority list that is off cooldown; cooldowns count down at the start of the champion's turn. Without a priority list: A4, A3, A2 (revives after the others), then A1.",
             "Nobody dies, so revives only do their other effects; effects with a condition or a chance under 100% on your own team are left out.",
-            "SPD is Trogly's calculated SPD (not yet checked against the game's champion screen) plus the leader's SPD aura where it works.",
+            "SPD is Trogly's calculated SPD without the champion screen's rounding (battles use unrounded stats), plus the leader's SPD aura where it works.",
         ],
         "notes": tune.notes,
         "not_simulated": tune.not_simulated,
