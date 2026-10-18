@@ -205,3 +205,14 @@ def test_calc_stats_spells_out_set_bonus_changes(home, monkeypatch):
     bonuses = trogly_state.calc_stats(agent, "Thor Faehammer", home=home)["set_bonuses"]
     assert bonuses == {"active_after": {"Pinpoint": ["Accuracy +20"], "Speed": ["Speed +12%"]},
                        "turned_on": ["Speed"], "turned_off": ["Relentless"]}
+
+
+def test_config_and_state_saved_with_a_byte_order_mark_still_load(tmp_path, monkeypatch):
+    # Windows PowerShell 5 and older Notepad write UTF-8 with a BOM; a hand-edited config must still work.
+    monkeypatch.delenv("TROGLY_AGENT_PATH", raising=False)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "config.json").write_text(json.dumps({"agent_path": "C:\Trogly\agent\Trogly.Agent.exe"}), encoding="utf-8-sig")
+    assert trogly_state.configured_agent_path(tmp_path) == "C:\Trogly\agent\Trogly.Agent.exe"
+    (tmp_path / "data" / "state").mkdir(parents=True)
+    (tmp_path / "data" / "state" / "trogly-state.json").write_text(json.dumps(STATE), encoding="utf-8-sig")
+    assert AccountState.load(tmp_path).account_summary()

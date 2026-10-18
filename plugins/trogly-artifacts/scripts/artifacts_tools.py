@@ -224,7 +224,7 @@ def _load_state(home: Path) -> dict[str, Any]:
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 

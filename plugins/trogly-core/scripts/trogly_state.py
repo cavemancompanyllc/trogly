@@ -134,7 +134,7 @@ class AccountState:
             raise TroglyError(
                 f"No account data yet at {path}. Run refresh_account with RAID open and logged in on this PC."
             )
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8-sig") as handle:
             return cls(json.load(handle), path)
 
     def snapshot(self, now: datetime | None = None) -> dict[str, Any]:
@@ -331,7 +331,7 @@ def _load_config(home: Path | None) -> dict[str, Any]:
     path = (home or instance_home()) / CONFIG_RELATIVE_PATH
     if not path.exists():
         return {}
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 

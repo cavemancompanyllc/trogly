@@ -11,21 +11,21 @@
       "name": "trogly-core",
       "source": "./plugins/trogly-core",
       "description": "Account access and memory: refresh from the running game, search champions and artifacts, see one champion's gear and calculated stats, plus goals, saved teams, saved loadouts, notes, and account history. The foundation the other Trogly plugins build on.",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "category": "gaming"
     },
     {
       "name": "trogly-artifacts",
       "source": "./plugins/trogly-artifacts",
       "description": "Gear advice: the best artifacts for a champion from your own inventory under stat and set targets (\"SPD 200+, then max ATK\"), checked with exact stats. Installs trogly-core too.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "gaming"
     },
     {
       "name": "trogly-knowledge",
       "source": "./plugins/trogly-knowledge",
       "description": "RAID facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs), auras, and every stage's enemies, boss kits, and boss stat boosts, plus a speed tune simulator that plays out a team's turn order the way the game does. Installs trogly-core too.",
-      "version": "0.3.3",
+      "version": "0.3.4",
       "category": "gaming"
     },
     {

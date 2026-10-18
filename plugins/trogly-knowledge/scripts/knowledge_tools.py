@@ -86,7 +86,7 @@ class Knowledge:
         path = home / KNOWLEDGE_RELATIVE_PATH
         if refresh or not path.exists():
             export_knowledge(home)
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8-sig") as handle:
             return cls(json.load(handle), path)
 
     # Champion kits
@@ -469,7 +469,7 @@ def _state(home: Path) -> dict[str, Any]:
     path = home / STATE_RELATIVE_PATH
     if not path.exists():
         raise TroglyError("No account data yet. Refresh the account with trogly-core's refresh_account first.")
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 
@@ -530,7 +530,7 @@ def _owned_roster(home: Path) -> dict[int, list[dict[str, Any]]]:
     path = home / STATE_RELATIVE_PATH
     if not path.exists():
         raise TroglyError("No account data yet. Refresh the account with trogly-core's refresh_account first.")
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         state = json.load(handle)
     roster: dict[int, list[dict[str, Any]]] = {}
     for champion in state.get("champions") or []:
@@ -575,7 +575,7 @@ def export_knowledge(home: Path) -> dict[str, Any]:
 def _agent_path(home: Path) -> Path:
     config_path = home / CONFIG_RELATIVE_PATH
     configured = os.environ.get("TROGLY_AGENT_PATH") or (
-        json.loads(config_path.read_text(encoding="utf-8")).get("agent_path", "") if config_path.exists() else "")
+        json.loads(config_path.read_text(encoding="utf-8-sig")).get("agent_path", "") if config_path.exists() else "")
     if not configured:
         raise TroglyError("Trogly doesn't know where the Agent is yet. Save it with trogly-core's set_agent_path tool.")
     agent = Path(configured)
@@ -588,7 +588,7 @@ def _owned_champions(home: Path) -> dict[int, list[dict[str, Any]]]:
     path = home / STATE_RELATIVE_PATH
     if not path.exists():
         return {}
-    with path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8-sig") as handle:
         state = json.load(handle)
     owned: dict[int, list[dict[str, Any]]] = {}
     for champion in state.get("champions") or []:
