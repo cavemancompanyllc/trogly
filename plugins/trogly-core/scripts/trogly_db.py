@@ -632,6 +632,7 @@ def _loadout_row(row: sqlite3.Row, state: AccountState) -> dict[str, Any]:
         "team": row["team_name"],
         "status": row["status"],
         "pieces_saved": len(json.loads(row["artifact_ids_json"])),
+        "artifact_ids": json.loads(row["artifact_ids_json"]),
         "target_stats": row["target_stats"],
         "notes": row["notes"],
         "created_at": row["created_at"],

@@ -194,6 +194,7 @@ def test_loadout_update_changes_tags_but_keeps_pieces(tmp_path, ledger):
     updated = ledger.loadouts("update", state, champion="Thor Faehammer", name="Clan Boss",
                               encounter="clan_boss:nightmare", status="retired")["updated"]
     assert (updated["encounter"], updated["status"], updated["pieces_saved"]) == ("clan_boss:nightmare", "retired", 1)
+    assert ledger.loadouts("list", state, status="all")["loadouts"][0]["artifact_ids"] == ["1"]
     with pytest.raises(TroglyError, match="no loadout called"):
         ledger.loadouts("update", state, champion="Thor Faehammer", name="Missing", status="active")
 
