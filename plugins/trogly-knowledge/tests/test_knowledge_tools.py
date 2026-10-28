@@ -94,6 +94,7 @@ def test_find_stage_by_boss_prefers_the_boss_own_dungeon(knowledge):
     found = k.find_stage("Phantom Shogun", 20)
     assert found["place"] == "AccessoryAscendDungeon (Akumori the Phantom Shogun)"
     assert found["difficulty"] == "only track"
+    assert (found["stage_id"], found["encounter"]) == (2179020, "stage:2179020")
     assert found["waves"] == [{"wave": 1, "enemies": ["Akumori the Phantom Shogun (6* level 300) - boss"]}]
     assert found["stage_modifiers"] == ["boss: SPD +175 (wave 1)", "boss: DEF -76% (wave 1)"]
     assert found["boss_kits"][0]["skills"][0]["name"] == "Scourge Sword"

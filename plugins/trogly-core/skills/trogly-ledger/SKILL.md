@@ -16,6 +16,7 @@ file yourself.
 | Player says what they're working towards | Offer `goals` add, with the champion and target if there is one |
 | A team is agreed | Offer `teams` save, with roles and a purpose like "Phantom Shogun 20" |
 | A gear plan is agreed or the player is happy with current gear | Offer `loadouts` save. It defaults to the gear worn now |
+| "What does Thor wear for Clan Boss?" | `loadouts` list with `encounter` (`clan_boss` finds every difficulty), then compare |
 | "Did I take Thor's gear for someone?" | `loadouts` compare: each saved piece shows equipped, in the vault, or worn by someone |
 | "What changed since...?" | `account_diff`. Refresh first if they want it up to now |
 | A choice with a reason worth keeping | `notes` add, kind decision |

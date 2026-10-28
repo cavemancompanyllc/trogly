@@ -21,6 +21,8 @@ STATE_RELATIVE_PATH = Path("data") / "state" / "trogly-state.json"
 CONFIG_RELATIVE_PATH = Path("data") / "config.json"
 EXPORT_TIMEOUT_SECONDS = 300
 DEFAULT_LIMIT = 25
+# Names players use that the game's data doesn't: Fire Knight's Castle is region code FireGolemCave, boss "Fyro".
+PLACE_ALIASES = {"fireknight": "FireGolemCave", "fireknightscastle": "FireGolemCave"}
 
 # RAID's affinity wheel: each affinity lands strong hits on the one it beats and weak hits on the one that beats
 # it. Void is neutral against everything (and nothing is strong or weak against it).
@@ -183,6 +185,8 @@ class Knowledge:
             "place": self._region_label(region),
             "difficulty": shown_difficulty,
             "stage": chosen["number"],
+            "stage_id": chosen["id"],
+            "encounter": f"stage:{chosen['id']}",
             "champion_slots": chosen["champion_slots"],
             "waves": [
                 {"wave": wave, "enemies": [f"{e['name']} ({e['stars']}* level {e['level']}){' - boss' if e['type_id'] in boss_ids else ''}"
@@ -421,6 +425,7 @@ class Knowledge:
     def _find_regions(self, location: str) -> list[dict[str, Any]]:
         key = location.strip().lower()
         compact = re.sub(r"[^a-z0-9]", "", key)
+        compact = PLACE_ALIASES.get(compact, compact).lower()
         regions = self.raw.get("regions") or []
         direct = [r for r in regions if compact in re.sub(r"[^a-z0-9]", "", f"{r['name']} {r['code']}".lower())]
         if direct:

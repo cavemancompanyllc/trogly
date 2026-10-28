@@ -52,7 +52,8 @@ def find_stage(location: str, stage: int | None = None, difficulty: str = "") ->
     """A dungeon or other stage from the game's own data: enemies by wave, the boss's full kit, stage modifiers
     (the boss's extra stats), and how many champions the player brings. location: dungeon, region, or boss name
     (e.g. "Phantom Shogun", "Dragon", "Ice Golem", "Doom Tower"). stage: the stage number. difficulty: Normal, Hard,
-    Brutal, or Nightmare where the place has them (most dungeons have one track)."""
+    Brutal, or Nightmare where the place has them (most dungeons have one track). With a stage, `encounter` is the
+    key to save builds under (trogly-core `loadouts`)."""
     return _answer(lambda: Knowledge.load().find_stage(location, stage, difficulty))
 
 

@@ -18,6 +18,9 @@ targets and explain the outcome.
    - Ceilings (`maximum`) only when going over is harmful.
    - Sets only if the player asked for them, or a set is clearly what the job needs.
 
+   If you were given an encounter key (`clan_boss:ultra_nightmare`, `arena:classic`, `stage:<id>`), the targets
+   come from what that encounter needs.
+
    If the goal is too vague to choose a stat ("make Thor good"), ask one short question about what content the
    champion is for, then continue. If the player gave numbers, use them exactly.
 3. **Run `optimize_gear`.** Start with the default pool (vault plus the champion's own gear).
@@ -32,7 +35,8 @@ targets and explain the outcome.
      player can find it in game
    - active set bonuses
    - who loses a borrowed piece
-5. **Offer to save the plan** with `loadouts` (action save), so a later "put Thor's gear back" works.
+5. **Offer to save the plan** with `loadouts` (action save), so a later "put Thor's gear back" works. If you were
+   given an encounter key, pass it as `encounter`.
 
 ## Rules
 

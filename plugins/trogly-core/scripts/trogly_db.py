@@ -1,4 +1,5 @@
-"""Trogly's ledger: account history, goals, teams, loadouts, and notes in `data/trogly.db` (stdlib sqlite3).
+"""Trogly's ledger: account history, goals, teams, loadouts, gear plans, battles, and notes in `data/trogly.db`
+(stdlib sqlite3).
 
 trogly-core is the only code that opens this database. Other plugins reach it through trogly-core's MCP tools.
 """
@@ -6,6 +7,7 @@ trogly-core is the only code that opens this database. Other plugins reach it th
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -24,6 +26,23 @@ from trogly_state import (
 DB_RELATIVE_PATH = Path("data") / "trogly.db"
 GOAL_STATUSES = ("open", "done", "dropped")
 NOTE_KINDS = ("decision", "session")
+LOADOUT_STATUSES = ("saved", "active", "retired")
+
+# What a build is for. Stages use the game's own stage id so builds and battle records join on the same key.
+ENCOUNTER_FORMS = {
+    "stage": r"\d+",
+    "arena": r"classic|tag|live",
+    "clan_boss": r"easy|normal|hard|brutal|nightmare|ultra_nightmare",
+    "hydra": r"normal|hard|brutal|nightmare",
+    "chimera": r"easy|normal|hard|brutal|nightmare|ultra_nightmare",
+    "siege": r"attack|defense",
+    "general": r"[a-z0-9_]+",
+}
+ENCOUNTER_HELP = (
+    "stage:<game stage id> (from find_stage), arena:classic|tag|live, clan_boss:<difficulty>, hydra:<difficulty>, "
+    "chimera:<difficulty>, siege:attack|defense, or general:<label> such as general:wave_clear"
+)
+LOADOUT_SELECT = "SELECT l.*, t.name AS team_name FROM loadouts l LEFT JOIN teams t ON t.id = l.team_id"
 DIFF_STATS = ("speed", "health", "attack", "defence", "accuracy", "resistance", "critical_chance", "critical_damage")
 
 # Each entry upgrades the schema by one version. Never edit an entry once released; add a new one.
@@ -97,6 +116,51 @@ MIGRATIONS = [
         next_steps TEXT,
         created_at TEXT NOT NULL
     );
+    """,
+    """
+    ALTER TABLE loadouts ADD COLUMN encounter TEXT;
+    ALTER TABLE loadouts ADD COLUMN team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;
+    ALTER TABLE loadouts ADD COLUMN status TEXT NOT NULL DEFAULT 'saved' CHECK (status IN ('saved', 'active', 'retired'));
+    CREATE INDEX loadouts_encounter ON loadouts (encounter);
+    CREATE TABLE gear_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        champion_id TEXT,
+        artifact_ids_json TEXT NOT NULL,
+        trigger TEXT,
+        target TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'dropped')),
+        outcome_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE battles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        encounter TEXT NOT NULL,
+        result TEXT CHECK (result IN ('win', 'loss', 'abandoned')),
+        duration_seconds REAL,
+        turns INTEGER,
+        rounds INTEGER,
+        opponent_json TEXT,
+        snapshot_id INTEGER REFERENCES snapshots(id) ON DELETE SET NULL,
+        source TEXT NOT NULL CHECK (source IN ('journal', 'manual'))
+    );
+    CREATE INDEX battles_encounter ON battles (encounter, started_at);
+    CREATE TABLE battle_heroes (
+        battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+        champion_id TEXT NOT NULL,
+        slot INTEGER NOT NULL,
+        team INTEGER NOT NULL,
+        artifact_ids_json TEXT NOT NULL,
+        battle_stats_json TEXT NOT NULL,
+        damage_dealt REAL,
+        damage_taken REAL,
+        survived INTEGER,
+        turns_taken INTEGER,
+        PRIMARY KEY (battle_id, team, slot)
+    );
+    CREATE INDEX battle_heroes_champion ON battle_heroes (champion_id);
     """,
 ]
 
@@ -370,11 +434,7 @@ class Ledger:
         champion_ref = fields.get("champion")
         champion = _resolve_one(state, champion_ref) if champion_ref else None
         if action == "list":
-            query, args = "SELECT * FROM loadouts", ()
-            if champion:
-                query, args = "SELECT * FROM loadouts WHERE champion_id = ?", (champion["id"],)
-            rows = self.connection.execute(query + " ORDER BY champion_id, name", args).fetchall()
-            return {"loadouts": [_loadout_row(row, state) for row in rows]}
+            return {"loadouts": [_loadout_row(row, state) for row in self._find_loadouts(champion, fields)]}
         if not champion:
             raise TroglyError("Say which champion the loadout is for.")
         name = (fields.get("name") or "").strip()
@@ -385,16 +445,41 @@ class Ledger:
             unknown = [i for i in artifact_ids if i not in state.artifacts_by_id]
             if unknown:
                 raise TroglyError(f"These artifact ids are not on the account: {', '.join(unknown)}.")
+            encounter = normalize_encounter(fields.get("encounter"))
+            team_id = self._team_id(fields.get("team"))
+            status = _loadout_status(fields.get("status") or "saved")
             with self.connection:
                 self.connection.execute(
-                    "INSERT INTO loadouts (champion_id, name, artifact_ids_json, target_stats, notes, created_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (champion_id, name) DO UPDATE SET"
-                    " artifact_ids_json = excluded.artifact_ids_json, target_stats = excluded.target_stats,"
-                    " notes = excluded.notes",
+                    "INSERT INTO loadouts (champion_id, name, artifact_ids_json, target_stats, notes, encounter,"
+                    " team_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT (champion_id, name) DO UPDATE SET artifact_ids_json = excluded.artifact_ids_json,"
+                    " target_stats = excluded.target_stats, notes = excluded.notes, encounter = excluded.encounter,"
+                    " team_id = excluded.team_id, status = excluded.status",
                     (champion["id"], name, json.dumps(artifact_ids), fields.get("target_stats") or None,
-                     fields.get("notes") or None, _now()),
+                     fields.get("notes") or None, encounter, team_id, status, _now()),
                 )
             return {"saved": self._loadout(champion["id"], name, state)}
+        if action == "update":
+            if not self._loadout(champion["id"], name, state):
+                raise TroglyError(f"{champion['name']} has no loadout called '{name}'.")
+            updates: dict[str, Any] = {}
+            if fields.get("encounter"):
+                updates["encounter"] = normalize_encounter(fields["encounter"])
+            if fields.get("team"):
+                updates["team_id"] = self._team_id(fields["team"])
+            if fields.get("status"):
+                updates["status"] = _loadout_status(fields["status"])
+            for column in ("target_stats", "notes"):
+                if fields.get(column):
+                    updates[column] = fields[column]
+            if updates:
+                assignments = ", ".join(f"{column} = ?" for column in updates)
+                with self.connection:
+                    self.connection.execute(
+                        f"UPDATE loadouts SET {assignments} WHERE champion_id = ? AND name = ?",
+                        (*updates.values(), champion["id"], name),
+                    )
+            return {"updated": self._loadout(champion["id"], name, state)}
         if action == "compare":
             loadout = self._loadout(champion["id"], name, state)
             if not loadout:
@@ -408,11 +493,41 @@ class Ledger:
             if not deleted:
                 raise TroglyError(f"{champion['name']} has no loadout called '{name}'.")
             return {"deleted": name, "champion": champion["name"]}
-        raise TroglyError("Loadout action must be list, save, compare, or delete.")
+        raise TroglyError("Loadout action must be list, save, update, compare, or delete.")
+
+    def _find_loadouts(self, champion: dict[str, Any] | None, fields: dict[str, Any]) -> list[sqlite3.Row]:
+        clauses, args = [], []
+        if champion:
+            clauses.append("l.champion_id = ?")
+            args.append(champion["id"])
+        if fields.get("encounter"):
+            # "clan_boss" finds every Clan Boss difficulty; "clan_boss:nightmare" only that one.
+            encounter = _encounter_text(fields["encounter"])
+            clauses.append("(l.encounter = ? OR l.encounter LIKE ?)")
+            args += [encounter, f"{encounter}:%"]
+        if fields.get("team"):
+            clauses.append("l.team_id = ?")
+            args.append(self._team_id(fields["team"]))
+        status = fields.get("status") or "current"
+        if status == "current":
+            clauses.append("l.status != 'retired'")
+        elif status != "all":
+            clauses.append("l.status = ?")
+            args.append(_loadout_status(status))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        return self.connection.execute(f"{LOADOUT_SELECT}{where} ORDER BY l.champion_id, l.name", args).fetchall()
+
+    def _team_id(self, team: str | None) -> int | None:
+        if not team or not team.strip():
+            return None
+        row = self.connection.execute("SELECT id FROM teams WHERE name = ?", (team.strip(),)).fetchone()
+        if not row:
+            raise TroglyError(f"No saved team called '{team}'. Save the team first, or leave team empty.")
+        return row["id"]
 
     def _loadout(self, champion_id: str, name: str, state: AccountState) -> dict[str, Any] | None:
         row = self.connection.execute(
-            "SELECT * FROM loadouts WHERE champion_id = ? AND name = ?", (champion_id, name)
+            f"{LOADOUT_SELECT} WHERE l.champion_id = ? AND l.name = ?", (champion_id, name)
         ).fetchone()
         if not row:
             return None
@@ -485,12 +600,37 @@ def _champion_by_id(state: AccountState | None, champion_id: str) -> dict[str, A
     return next((c for c in state.champions if c.get("id") == champion_id), None)
 
 
+def normalize_encounter(encounter: str | None) -> str | None:
+    """Checks an encounter key against ENCOUNTER_FORMS. Empty means the build isn't tied to one encounter."""
+    if not encounter or not str(encounter).strip():
+        return None
+    text = _encounter_text(encounter)
+    kind, _, detail = text.partition(":")
+    pattern = ENCOUNTER_FORMS.get(kind)
+    if pattern is None or not re.fullmatch(pattern, detail):
+        raise TroglyError(f"'{encounter}' is not an encounter Trogly knows. Use {ENCOUNTER_HELP}.")
+    return text
+
+
+def _encounter_text(encounter: str) -> str:
+    return re.sub(r"[\s-]+", "_", str(encounter).strip().lower())
+
+
+def _loadout_status(status: str) -> str:
+    if status not in LOADOUT_STATUSES:
+        raise TroglyError(f"Loadout status must be one of: {', '.join(LOADOUT_STATUSES)}.")
+    return status
+
+
 def _loadout_row(row: sqlite3.Row, state: AccountState) -> dict[str, Any]:
     champion = _champion_by_id(state, row["champion_id"])
     return {
         "champion": champion["name"] if champion else f"id {row['champion_id']} (no longer on the account)",
         "champion_id": row["champion_id"],
         "name": row["name"],
+        "encounter": row["encounter"],
+        "team": row["team_name"],
+        "status": row["status"],
         "pieces_saved": len(json.loads(row["artifact_ids_json"])),
         "target_stats": row["target_stats"],
         "notes": row["notes"],

@@ -196,17 +196,25 @@ def teams(
 @mcp.tool()
 def loadouts(
     action: str = "list", champion: str = "", name: str = "", artifact_ids: list[str] | None = None,
-    target_stats: str = "", notes: str = "",
+    target_stats: str = "", notes: str = "", encounter: str = "", team: str = "", status: str = "",
 ) -> dict[str, Any]:
-    """Saved gear plans per champion.
+    """Saved gear plans (builds) per champion, optionally tied to an encounter and a saved team.
 
-    action: list (optionally for one champion), save (champion and name; artifact_ids default to the gear the
-    champion wears now; target_stats free text such as "SPD 230+, ACC 250+"), compare (champion and name: where
-    each saved piece is now: equipped, in the vault, or worn by someone else), or delete.
+    action: list (filter by champion, encounter, team, and status: current (default, hides retired), saved,
+    active, retired, or all), save (champion and name; artifact_ids default to the gear the champion wears now;
+    target_stats free text such as "SPD 230+, ACC 250+"; saving an existing name replaces it), update (champion and
+    name; changes encounter, team, status, target_stats, or notes, never the pieces), compare (champion and name:
+    where each saved piece is now: equipped, in the vault, or worn by someone else), or delete.
+
+    encounter: stage:<game stage id> (the stage_id find_stage returns), arena:classic|tag|live,
+    clan_boss:easy|normal|hard|brutal|nightmare|ultra_nightmare, hydra:normal|hard|brutal|nightmare,
+    chimera:<same as clan_boss>, siege:attack|defense, or general:<label> (general:wave_clear). Listing by
+    "clan_boss" finds every difficulty. team: a saved team's name. status: saved (default), active (worn for
+    that encounter now), or retired.
     """
     return _with_state(lambda ledger, state: ledger.loadouts(
         action, state, champion=champion, name=name, artifact_ids=artifact_ids or [], target_stats=target_stats,
-        notes=notes))
+        notes=notes, encounter=encounter, team=team, status=status))
 
 
 @mcp.tool()
