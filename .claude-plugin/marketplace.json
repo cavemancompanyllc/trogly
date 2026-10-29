@@ -18,7 +18,7 @@
       "name": "trogly-artifacts",
       "source": "./plugins/trogly-artifacts",
       "description": "Gear advice: the best artifacts for a champion from your own inventory under stat and set targets (\"SPD 200+, then max ATK\"), checked with exact stats, builds saved per encounter (Arena, Clan Boss, a dungeon stage), a sell list for the vault, the odds that a piece is worth upgrading, set advice per champion and encounter (stats or sets?), and whole-team gearing. Installs trogly-core too.",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "category": "gaming"
     },
     {

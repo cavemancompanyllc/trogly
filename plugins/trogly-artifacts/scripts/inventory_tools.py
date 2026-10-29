@@ -39,6 +39,11 @@ FLAT_WEIGHT = 0.25
 # upgrade odds count the build's own stats).
 CRIT_STATS = ("C.RATE", "C.DMG")
 CRIT_WEIGHT = 0.5
+# The most valuable pieces in the game: SPD boots, then crit rate gloves. Their main stat is worth this many rolls
+# on top of the substats, and fewer good hits make one worth upgrading.
+PREMIUM_MAINS = {("Boots", "SPD"): 2.0, ("Gloves", "C.RATE"): 1.5}
+GOOD_HITS = 5
+PREMIUM_GOOD_HITS = 4
 # Future rolls are counted as one roll unit on a 6-star piece; lower ranks roll smaller.
 RANK_ROLL_FACTOR = {6: 1.0, 5: 0.8, 4: 0.6, 3: 0.45, 2: 0.3, 1: 0.2}
 # Score = stat score x (SET_FLOOR + (1 - SET_FLOOR) x set weight): stats still matter most, the set breaks ties.
@@ -267,6 +272,9 @@ def _scored(raw: dict[str, Any], weights: dict[str, tuple[float, str]] | None = 
     }
     artifact["set_weight"], artifact["set_tier"] = (weights or {}).get(raw["set"], (NO_SET_WEIGHT, "-"))
     factor = _set_factor(artifact["set_weight"])
+    premium = PREMIUM_MAINS.get((raw["slot"], main), 0.0)
+    artifact["premium"] = premium > 0
+    good_hits = PREMIUM_GOOD_HITS if premium else GOOD_HITS
     artifact["profiles"], artifact["good_chance"] = {}, {}
     for name, profile in PROFILES.items():
         if not _main_fits(artifact, profile["stats"], profile["mains"]):
@@ -275,8 +283,8 @@ def _scored(raw: dict[str, Any], weights: dict[str, tuple[float, str]] | None = 
         now = _units(subs, profile["stats"])
         distribution = _hit_distribution_for(artifact, profile["stats"])
         expected_new_hits = sum(h * p for h, p in distribution.items()) - _hits(subs, profile["stats"])
-        artifact["profiles"][name] = (now + expected_new_hits * RANK_ROLL_FACTOR.get(raw["rank"], 0.2)) * factor
-        artifact["good_chance"][name] = sum(p for h, p in distribution.items() if h >= 5)
+        artifact["profiles"][name] = (premium + now + expected_new_hits * RANK_ROLL_FACTOR.get(raw["rank"], 0.2)) * factor
+        artifact["good_chance"][name] = sum(p for h, p in distribution.items() if h >= good_hits)
     fitting = {n: s for n, s in artifact["profiles"].items() if s is not None}
     artifact["best_profile"] = max(fitting, key=fitting.get) if fitting else None
     artifact["best_score"] = fitting[artifact["best_profile"]] if fitting else -1.0
@@ -363,7 +371,8 @@ def _sell_row(artifact: dict[str, Any], vault: list[dict[str, Any]]) -> dict[str
                        f"{', plus ' + ' and '.join(crit) + ' at half value' if crit else ''}, "
                        f"score {artifact['best_score']:.1f}")
         if artifact["level"] < 16:
-            reasons.append(f"{artifact['good_chance'][best]:.0%} chance of 5+ useful hits if upgraded")
+            good_hits = PREMIUM_GOOD_HITS if artifact["premium"] else GOOD_HITS
+            reasons.append(f"{artifact['good_chance'][best]:.0%} chance of {good_hits}+ useful hits if upgraded")
     return {**_piece(artifact), "why": "; ".join(reasons)}
 
 

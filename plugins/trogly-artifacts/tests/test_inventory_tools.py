@@ -104,3 +104,14 @@ def test_crit_substats_count_for_builds_that_do_not_ask_for_them():
 def test_flat_main_on_gloves_chest_boots_suits_no_build(slot, stat):
     flat = piece("flat", slot, bonus(stat, 80), [bonus("Speed", 15, rolls=3), bonus("CriticalChance", 0.15, False, rolls=1)])
     assert inventory_tools._scored(flat)["best_profile"] is None
+
+
+def test_speed_boots_and_crit_gloves_outrank_the_same_substats_on_other_mains():
+    subs = [bonus("Speed", 5), bonus("Health", 0.05, False)]
+    speed = inventory_tools._scored(piece("s", "Boots", bonus("Speed", 45), subs, level=0))
+    hp_boots = inventory_tools._scored(piece("h", "Boots", bonus("Health", 0.6, False), subs, level=0))
+    assert speed["premium"] and not hp_boots["premium"]
+    assert speed["profiles"]["support"] > hp_boots["profiles"]["support"]
+    crit = inventory_tools._scored(piece("c", "Gloves", bonus("CriticalChance", 0.5, False), subs, level=0))
+    assert crit["premium"] and crit["good_chance"]["hp"] >= inventory_tools._scored(
+        piece("d", "Gloves", bonus("CriticalDamage", 0.65, False), subs, level=0))["good_chance"]["hp"]
