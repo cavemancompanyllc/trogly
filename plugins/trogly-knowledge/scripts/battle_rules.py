@@ -38,6 +38,14 @@ BEATS = {"Magic": "Spirit", "Spirit": "Force", "Force": "Magic"}
 
 NORMAL, CRUSHING, CRITICAL, GLANCING = "normal", "crushing", "critical", "glancing"
 
+# DamageCalculator.DamageReductionByStatusEffects (0x182D86DA0) subtracts these from 1: a frozen target takes 25% less;
+# Invisible1 / Invisible2 take 7.5% / 15% less from AoE damage. Code constants, not static data.
+FREEZE_REDUCTION = 0.25
+INVISIBLE_AOE_REDUCTION = {"Invisible1": 0.075, "Invisible2": 0.15}
+# Effect kinds the game runs through StatusChangeDamageMultiplierProcessor (EffectProcessorContainer, 0x182DA4880):
+# the status's own formula multiplies the hit's base value.
+STATUS_MULTIPLIER_KINDS = {"IncreaseDamageTaken", "ReduceDamageTaken", "StatusChangeDamageMultiplier", "Rage", "Inspiration"}
+
 
 def gameplay_constants(knowledge_battle: dict[str, Any]) -> tuple[dict[str, float], list[str]]:
     """The game's battle constants, plus the names of any that fell back to defaults."""
@@ -110,17 +118,50 @@ def hit_type(relation: int, crit_chance: float, rng: random.Random, constants: d
     return NORMAL
 
 
-def damage_multipliers(relation: int, hit: str, critical_damage: float, book_bonus: float, extra: float,
+def damage_multipliers(relation: int, hit: str, critical_damage: float, book_bonus: float, counterattack: float,
                        stat_modifier: float, constants: dict[str, float]) -> float:
     """DamageCalculator.CalculateDamage (0x182D85A50): the skill's value is multiplied by
-    (1 + book damage bonus) x (1 + affinity) x (1 + hit bonus) x (1 + extra) x (1 + stat modifier).
+    (1 + book damage bonus) x (1 + affinity) x (1 + hit bonus) x (1 + counterattack modifier) x (1 + stat modifier).
 
-    Affinity only counts against: element_disadvantage_coef on a disadvantage. The hit bonus is the attacker's C.DMG on a
-    crit, crushing_hit_coef on a crushing hit, glancing_hit_coef on a glancing hit (HitTypeBonus, 0x182D877D0).
+    Affinity only counts against: element_disadvantage_coef on a disadvantage. The hit bonus is the attacker's C.DMG
+    (plus the damage context's CriticalDamageModifier) on a crit, crushing_hit_coef on a crushing hit, glancing_hit_coef
+    on a glancing hit (HitTypeBonus, 0x182D877D0). The counterattack modifier is DamageContext.CounterattackModifier, set
+    only on counterattacks.
     """
     affinity = constants["element_disadvantage_coef"] if relation == -1 else 0.0
     bonus = {CRITICAL: critical_damage, CRUSHING: constants["crushing_hit_coef"], GLANCING: constants["glancing_hit_coef"]}.get(hit, 0.0)
-    return (1 + book_bonus) * (1 + affinity) * (1 + bonus) * (1 + extra) * (1 + stat_modifier)
+    return (1 + book_bonus) * (1 + affinity) * (1 + bonus) * (1 + counterattack) * (1 + stat_modifier)
+
+
+def status_reduction(statuses: set[str], aoe: bool, kind: str, factors: dict[str, dict[str, float]]) -> tuple[float, list[str]]:
+    """DamageCalculator.DamageReductionByStatusEffects (0x182D86DA0): the target's damage-reducing statuses.
+
+    Starts at 1, subtracts 0.25 for Freeze and, for AoE damage, 0.075 for Invisible1 and 0.15 for Invisible2; then
+    multiplies by the Stone Skin and Petrification factors, which are static data on those statuses' own effect types
+    (`factors`: status name -> damage_factors from the knowledge file). The factor used depends on the damage's kind:
+    TimeBomb, AoEContinuousDamage (HP Burn, Stone Skin only), or the general one. Returns the factor and the names of
+    statuses whose factor the knowledge file didn't carry (left at 1).
+    """
+    total = 1.0
+    if "Freeze" in statuses:
+        total -= FREEZE_REDUCTION
+    if aoe:
+        total -= sum(share for name, share in INVISIBLE_AOE_REDUCTION.items() if name in statuses)
+    missing = []
+    stone = next((name for name in ("SimpleStoneSkin", "ReflectiveStoneSkin") if name in statuses), None)
+    if stone:
+        key = {"TimeBomb": "stone_skin_time_bomb", "AoEContinuousDamage": "stone_skin_hp_burn"}.get(kind, "stone_skin")
+        value = (factors.get(stone) or {}).get(key)
+        total *= value if value is not None else 1.0
+        if value is None:
+            missing.append(stone)
+    if "Petrification" in statuses:
+        key = "petrification_time_bomb" if kind == "TimeBomb" else "petrification"
+        value = (factors.get("Petrification") or {}).get(key)
+        total *= value if value is not None else 1.0
+        if value is None:
+            missing.append("Petrification")
+    return total, missing
 
 
 def damage_roll(rng: random.Random) -> float:

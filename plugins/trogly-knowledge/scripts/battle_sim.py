@@ -78,6 +78,10 @@ SUPPORTED_KINDS = {"Damage", "ApplyBuff", "ApplyDebuff", "Heal", "Revive", "Incr
                    "RemoveDebuff", "RemoveBuff", "ReduceCooldown", "IncreaseCooldown", "ChangeDamageMultiplier",
                    "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization"}
 DEAD_TARGETS = {"AllDeadAllies", "RandomDeadAlly", "RandomRevivableAlly"}
+AOE_TARGETS = {"AllEnemies", "AllHeroes"}
+DAMAGE_TAKEN_KINDS = {"IncreaseDamageTaken", "ReduceDamageTaken"}
+# Damage taken changes a status's name implies, used only when the knowledge file lacks the status's own effect type.
+FALLBACK_DAMAGE_TAKEN = {"IncreaseDamageTaken": 1, "ReduceDamageTaken": -1}
 ENEMY_SKILL_TARGETS = {"AliveEnemies", "AllEnemies", "AliveEnemiesIncludeInvisible"}
 ALLY_SKILL_TARGETS = {"AliveAllies", "AllAllies", "AliveAlliesExceptProducer", "AllAlliesExceptProducer"}
 
@@ -307,7 +311,9 @@ class Battle:
                 dealt = self.receive_fixed(actor, status.producer, amount, related_status=status.name, scales_by_hp=False)
                 notes.append(f"poison {round(dealt)}")
             elif status_family(status.name) == "Burn":
-                amount = actor.max_hp * HP_BURN_SHARE
+                # HP Burn goes through the same status reduction (its kind, AoEContinuousDamage, has its own Stone
+                # Skin factor in DamageReductionByStatusEffects).
+                amount = actor.max_hp * HP_BURN_SHARE * self.status_reduction(actor, False, "AoEContinuousDamage")
                 dealt = self.receive_fixed(actor, status.producer, amount, related_status=status.name, scales_by_hp=True)
                 notes.append(f"HP Burn {round(dealt)}")
             elif status.name in HEAL_OVER_TIME:
@@ -534,11 +540,11 @@ class Battle:
             context.last_hit = hit
             if actor.side == "team":
                 self.hits[hit] = self.hits.get(hit, 0) + 1
-            amount = base * rules.damage_multipliers(
+            amount = base * self.status_multiplier(actor, target, effect, context) * rules.damage_multipliers(
                 relation, hit, actor.stat("critical_damage"), context.skill.damage_bonus, 0.0,
                 rules.stat_damage_modifier({}, {}, self.sim.area, actor.is_boss, target.is_boss), self.sim.constants)
             amount *= rules.defence_factor(target.stat("defence"), 0.0, -actor.stats.get("ignore_defence", 0.0))
-            amount *= status_damage_factor(target)
+            amount *= self.status_reduction(target, effect.get("target") in AOE_TARGETS, "Damage")
             amount *= rules.damage_roll(self.rng)
             scales = "TRG_HP" in (effect.get("multiplier") or "") or "TRG_B_HP" in (effect.get("multiplier") or "")
             amount = self.passive_damage(actor, target, amount, effect, scales_by_hp=scales)
@@ -549,6 +555,51 @@ class Battle:
                 notes.append(f"crit {target.name} {round(dealt)}")
             else:
                 notes.append(f"hits {target.name} {round(dealt)}")
+
+    def status_multiplier(self, actor: Fighter, target: Fighter, effect: dict[str, Any], context: "SkillContext") -> float:
+        """StatusChangeDamageMultiplierProcessor (0x182DDA400): every status on the target or the attacker whose own
+        effect is a damage multiplier (Weaken, Strengthen, ...) multiplies the hit's base value by its formula when its
+        condition holds, so several such statuses multiply. Block Damage skips them; here it leaves nothing to multiply."""
+        factor = 1.0
+        for holder, other in ((target, actor), (actor, target)):
+            for status in holder.statuses:
+                factor *= self.one_status_multiplier(status, holder, other, actor, effect, context)
+        return factor
+
+    def one_status_multiplier(self, status: Status, holder: Fighter, other: Fighter, actor: Fighter, effect: dict[str, Any],
+                              context: "SkillContext") -> float:
+        definition = self.sim.status_types.get(status.name)
+        if definition is None:
+            return self.sim.fallback_multiplier(status, holder is not actor)
+        own = definition.get("effect") or {}
+        if own.get("kind") not in rules.STATUS_MULTIPLIER_KINDS or not own.get("multiplier"):
+            return 1.0
+        kinds = (own.get("relation") or {}).get("kinds") or []
+        if kinds and effect["kind"] not in kinds:
+            return 1.0
+        resolver = Resolver(self, holder, other, context, related_effect=effect, related_producer=actor,
+                            owner_produces=holder is actor)
+        condition = own.get("condition")
+        try:
+            if not condition:
+                # Without a condition, a damage-taken status changes only the damage its holder takes.
+                if own["kind"] not in DAMAGE_TAKEN_KINDS:
+                    self.sim.miss(holder, f"{status.name}: {own['kind']} without a condition")
+                    return 1.0
+                if holder is actor:
+                    return 1.0
+            elif not formula.run(condition, resolver):
+                return 1.0
+            return formula.run(own["multiplier"], resolver)
+        except (formula.Unsupported, formula.FormulaError) as error:
+            self.sim.miss(holder, f"{status.name}: formula uses {getattr(error, 'name', None) or 'unreadable text'}")
+            return self.sim.fallback_multiplier(status, holder is not actor)
+
+    def status_reduction(self, target: Fighter, aoe: bool, kind: str) -> float:
+        factor, missing = rules.status_reduction({s.name for s in target.statuses}, aoe, kind, self.sim.status_factors)
+        for name in missing:
+            self.sim.miss(target, f"{name}: damage factor isn't in the knowledge file")
+        return factor
 
     def passive_damage(self, actor: Fighter, target: Fighter, amount: float, effect: dict[str, Any] | None,
                        scales_by_hp: bool, related_status: str | None = None) -> float:
@@ -704,19 +755,6 @@ class Battle:
         return False
 
 
-def status_damage_factor(target: Fighter) -> float:
-    """Weaken (IncreaseDamageTaken) and Strengthen (ReduceDamageTaken). DamageReductionByStatusEffects (0x182D86DA0)
-    isn't fully read yet: the factors are assumed to multiply."""
-    factor = 1.0
-    for status in target.statuses:
-        family = status_family(status.name)
-        if family == "IncreaseDamageTaken":
-            factor *= 1 + status_share(status.name)
-        elif family == "ReduceDamageTaken":
-            factor *= 1 - status_share(status.name)
-    return factor
-
-
 def stamina_change(text: str | None, current: int, full: int) -> int | None:
     if not text:
         return None
@@ -841,9 +879,21 @@ class Simulator:
         self.by_tick = to_raw(battle.get("stamina_by_tick") or 0.07)
         self.to_turn = to_raw(battle.get("stamina_to_turn") or 100)
         self.constants, self.assumed_constants = rules.gameplay_constants(battle)
+        self.status_types: dict[str, dict[str, Any]] = knowledge.raw.get("status_effects") or {}
+        self.status_factors = {name: (d.get("damage_factors") or {}) for name, d in self.status_types.items()}
+        self.status_types_error: str | None = knowledge.raw.get("status_effects_error")
+        self.fallback_statuses: set[str] = set()
         self.area = CLAN_BOSS_AREA
         self.missing: dict[str, set[str]] = {}
         self.notes: list[str] = []
+
+    def fallback_multiplier(self, status: Status, on_target: bool) -> float:
+        """Weaken or Strengthen without its effect type in the knowledge file: the share in its name, on damage taken."""
+        sign = FALLBACK_DAMAGE_TAKEN.get(status_family(status.name))
+        if sign is None or not on_target:
+            return 1.0
+        self.fallback_statuses.add(status.name)
+        return 1 + sign * status_share(status.name)
 
     def miss(self, fighter: Fighter, what: str) -> None:
         self.missing.setdefault(fighter.name, set()).add(what)
@@ -1134,11 +1184,19 @@ def assumptions(sim: Simulator) -> list[str]:
         "The Demon Lord uses A2, A3, A1 in turn and picks a random target; the fight ends after its "
         f"{DEFAULT_BOSS_TURN_LIMIT}th turn or when the team is dead. Assumed until checked against logged fights.",
         "Stat buffs and debuffs change the stat by their share of the champion's battle stat (measured for SPD).",
-        "Weaken and Strengthen multiply damage taken; Poison is 5% or 2.5% of max HP and HP Burn 3% at the start of the "
-        "holder's turn, before the boss's damage caps.",
+        "Weaken, Strengthen, and other damage-multiplying statuses use each status's own formula from the game and "
+        "multiply the hit's base value (game code). Freeze, Invisible against AoE, Stone Skin, and Petrification reduce "
+        "damage as the game's DamageReductionByStatusEffects does.",
+        "Poison is 5% or 2.5% of max HP and HP Burn 3% at the start of the holder's turn, before the boss's damage caps.",
         "Masteries, blessings, and set effects other than Lifesteal aren't simulated, so damage is a floor for teams that "
         "rely on Warmaster or Giant Slayer.",
     ]
+    if sim.fallback_statuses:
+        notes.append("This knowledge file predates the export of status effect types, so "
+                     f"{', '.join(sorted(sim.fallback_statuses))} used the share in the status's name. "
+                     "Run refresh_knowledge to use the game's formulas.")
+    if sim.status_types_error:
+        notes.append(f"The Agent couldn't read status effect types ({sim.status_types_error}).")
     if sim.assumed_constants:
         notes.append("This knowledge file predates the export of the game's hit and affinity constants; defaults are used "
                      f"for {', '.join(sim.assumed_constants)}. Run refresh_knowledge to use the game's values.")

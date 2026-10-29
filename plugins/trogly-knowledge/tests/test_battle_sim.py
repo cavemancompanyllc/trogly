@@ -237,7 +237,7 @@ def test_compared_teams_rank_by_mean_damage_and_fill_the_report(knowledge, tmp_p
     report = battle_report.write_report(results, tmp_path, title="Test <Report>")
     html = report.read_text(encoding="utf-8")
     assert "<title>Test &lt;Report&gt;</title>" in html
-    assert "Poison <\/script>" in html and "__TROGLY_DATA__" not in html
+    assert r"Poison <\/script>" in html and "__TROGLY_DATA__" not in html
 
 
 def test_ollama_mode_returns_the_local_write_up(knowledge, tmp_path, monkeypatch):
@@ -257,3 +257,63 @@ def test_ollama_mode_returns_the_local_write_up(knowledge, tmp_path, monkeypatch
     answer = battle_report.finish(results, tmp_path, analysis="ollama")
     assert answer["analysis"] == {"by": "Ollama qwen3:32b", "text": "Team 1 wins on poison uptime."}
     assert "digest" not in answer and Path(answer["report_file"]).exists()
+
+
+# Damage-changing statuses
+
+
+HIT = {"kind": "Damage", "target": "Target", "multiplier": "1*ATK"}
+POISON_TICK = {"kind": "ContinuousDamage", "target": "Target", "multiplier": None}
+STATUS_TYPES = {
+    "IncreaseDamageTaken25": {"id": 350, "effect": {"kind": "IncreaseDamageTaken", "multiplier": "1.3",
+                                                    "condition": "ownerIsRelatedEffectTarget",
+                                                    "relation": {"kinds": ["Damage"], "phases": ["BeforeDamageCalculated"]}}},
+    "ReduceDamageTaken15": {"id": 510, "effect": {"kind": "ReduceDamageTaken", "multiplier": "0.85", "condition": None,
+                                                  "relation": {"kinds": ["Damage"], "phases": ["BeforeDamageCalculated"]}}},
+}
+
+
+def one_battle(knowledge, status_types=None):
+    if status_types is not None:
+        knowledge.raw["status_effects"] = status_types
+    sim = battle_sim.Simulator(knowledge, STATE)
+    stage = sim.clan_boss_stage("Nightmare", "Void")["stage"]
+    hero, boss = sim.fresh_copy(sim.team_fighters([{"champion": "Poisoner"}]) + [sim.boss_fighter(stage, None)])
+    battle = battle_sim.Battle(sim, [hero, boss], 1, record=False)
+    return sim, battle, hero, boss, battle_sim.SkillContext(hero, hero.skills[0], boss)
+
+
+def test_weaken_and_strengthen_use_the_games_own_formulas(knowledge):
+    sim, battle, hero, boss, context = one_battle(knowledge, STATUS_TYPES)
+    boss.statuses.append(battle_sim.Status("IncreaseDamageTaken25", 2, hero, False))
+    assert battle.status_multiplier(hero, boss, HIT, context) == pytest.approx(1.3)
+    # Two damage-multiplying statuses multiply, as the processor does to the hit's base value.
+    boss.statuses.append(battle_sim.Status("ReduceDamageTaken15", 2, boss, True))
+    assert battle.status_multiplier(hero, boss, HIT, context) == pytest.approx(1.3 * 0.85)
+    # Only the effect kinds in the status's relation: poison ticks aren't Damage.
+    assert battle.status_multiplier(hero, boss, POISON_TICK, context) == 1.0
+    assert not sim.fallback_statuses
+
+
+def test_a_damage_taken_status_only_changes_the_damage_its_holder_takes(knowledge):
+    _, battle, hero, boss, context = one_battle(knowledge, STATUS_TYPES)
+    hero.statuses += [battle_sim.Status("IncreaseDamageTaken25", 2, boss, False), battle_sim.Status("ReduceDamageTaken15", 2, hero, True)]
+    assert battle.status_multiplier(hero, boss, HIT, context) == 1.0
+
+
+def test_older_knowledge_files_fall_back_to_the_share_in_the_name(knowledge):
+    sim, battle, hero, boss, context = one_battle(knowledge)
+    boss.statuses.append(battle_sim.Status("IncreaseDamageTaken15", 2, hero, False))
+    assert battle.status_multiplier(hero, boss, HIT, context) == pytest.approx(1.15)
+    assert sim.fallback_statuses == {"IncreaseDamageTaken15"}
+
+
+def test_freeze_invisible_and_stone_skin_reduce_damage_as_the_game_does():
+    assert rules.status_reduction({"Freeze"}, False, "Damage", {}) == (0.75, [])
+    assert rules.status_reduction({"Invisible2"}, True, "Damage", {})[0] == pytest.approx(0.85)
+    assert rules.status_reduction({"Invisible2"}, False, "Damage", {})[0] == 1.0
+    assert rules.status_reduction({"Freeze", "Invisible1"}, True, "Damage", {})[0] == pytest.approx(0.675)
+    factors = {"SimpleStoneSkin": {"stone_skin": 0.5, "stone_skin_hp_burn": 0.2}}
+    assert rules.status_reduction({"SimpleStoneSkin"}, False, "AoEContinuousDamage", factors)[0] == pytest.approx(0.2)
+    assert rules.status_reduction({"Freeze", "SimpleStoneSkin"}, False, "Damage", factors)[0] == pytest.approx(0.375)
+    assert rules.status_reduction({"Petrification"}, False, "Damage", {}) == (1.0, ["Petrification"])
