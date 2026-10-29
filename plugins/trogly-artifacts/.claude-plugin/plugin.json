@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "trogly-artifacts",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Gear advice for RAID: Shadow Legends: finds the best artifacts for a champion from your own inventory under stat and set targets, with exact stats, saves builds per encounter, lists artifacts to sell, ranks pieces worth upgrading by their odds, judges artifact sets per champion and encounter (tiers you can change, boss immunities read from the game), and gears whole teams. Needs trogly-core.",
   "author": {
     "name": "Mike",

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,9 @@ def optimize_gear(
         },
         "note": NOTE,
     }
+    data_source = _data_source(answer.get("snapshot"))
+    if data_source:
+        result["data_source"] = data_source
     if not loadouts:
         result["message"] = (
             "No loadout from the allowed gear meets every requirement. Relax a minimum, allow more sets, or allow "
@@ -216,6 +220,24 @@ def _describe_request(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _data_source(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Says when the answer came from the last saved game read instead of the running game, and how old it is."""
+    if not snapshot or snapshot.get("source") != "saved":
+        return None
+    read_at = snapshot.get("read_at") or ""
+    try:
+        age = round((datetime.now(timezone.utc) - datetime.fromisoformat(read_at.replace("Z", "+00:00"))).total_seconds() / 60)
+    except ValueError:
+        age = None
+    return {
+        "source": "saved game read",
+        "read_at": read_at,
+        "age_minutes": age,
+        "message": "The game couldn't be read, so this uses the last account refresh. Gear changed in game since then "
+                   "isn't included; refresh with the game open for an up-to-date answer.",
+    }
+
+
 def _run_agent(home: Path, request: dict[str, Any]) -> dict[str, Any]:
     agent = _agent_path(home)
     request_path = home / REQUEST_RELATIVE_PATH
@@ -226,6 +248,8 @@ def _run_agent(home: Path, request: dict[str, Any]) -> dict[str, Any]:
         completed = subprocess.run(
             [*command, "--optimize-gear", str(request_path)],
             capture_output=True, text=True, timeout=AGENT_TIMEOUT_SECONDS, check=False,
+            # The Agent keeps its saved game read next to the state file and uses it when the game can't be read.
+            env={**os.environ, "TROGLY_STATE_OUTPUT": str(home / STATE_RELATIVE_PATH)},
         )
     except subprocess.TimeoutExpired as error:
         raise TroglyError(f"The Agent did not answer within {AGENT_TIMEOUT_SECONDS} seconds.") from error

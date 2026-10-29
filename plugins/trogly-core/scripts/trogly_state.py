@@ -431,7 +431,10 @@ def calc_stats(
         "set_bonuses": _set_bonus_change(result.get("sets_before") or [], result.get("sets_after") or []),
         "sets_after": [_set_status(entry) for entry in result.get("sets_after") or []],
         "warnings": result.get("warnings") or [],
-        "note": "Calculated from live game data with Trogly's stat calculator (checked against the game's champion screens and battle stats). "
+        "note": ("Calculated from live game data" if (result.get("snapshot") or {}).get("source") != "saved" else
+                 f"The game couldn't be read, so this uses the last account refresh ({(result.get('snapshot') or {}).get('read_at')}); "
+                 "gear changed in game since then isn't included. Calculated")
+        + " with Trogly's stat calculator (checked against the game's champion screens and battle stats). "
         "Nothing was changed in the game.",
     }
 
@@ -445,6 +448,8 @@ def _run_agent_json(agent_path: str, command: str, request: dict[str, Any], home
         completed = subprocess.run(
             [*_agent_command(agent), command, str(request_path)],
             capture_output=True, text=True, timeout=REFRESH_TIMEOUT_SECONDS, check=False,
+            # The Agent keeps its saved game read next to the state file and uses it when the game can't be read.
+            env={**os.environ, "TROGLY_STATE_OUTPUT": str(state_path(home))},
         )
     except subprocess.TimeoutExpired as error:
         raise TroglyError(f"The Agent did not answer within {REFRESH_TIMEOUT_SECONDS} seconds.") from error

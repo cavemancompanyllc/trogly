@@ -129,3 +129,11 @@ def test_missing_agent_points_to_set_agent_path(tmp_path, monkeypatch):
     (tmp_path / "data" / "state" / "trogly-state.json").write_text(json.dumps(STATE), encoding="utf-8")
     with pytest.raises(TroglyError, match="set_agent_path"):
         artifacts_tools.optimize_gear("Thor Faehammer", "SPD", home=tmp_path)
+
+
+def test_answers_from_the_saved_game_read_say_so_and_how_old_they_are():
+    assert artifacts_tools._data_source({"source": "live", "read_at": "2026-10-29T03:31:07+00:00"}) is None
+    assert artifacts_tools._data_source(None) is None
+    saved = artifacts_tools._data_source({"source": "saved", "read_at": "2000-01-01T00:00:00+00:00"})
+    assert saved["source"] == "saved game read" and saved["age_minutes"] > 0
+    assert "last account refresh" in saved["message"]
