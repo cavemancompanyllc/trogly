@@ -367,3 +367,18 @@ def test_turn_variables_know_whose_turn_it_is(knowledge):
     assert battle_sim.Resolver(battle, hero, None, context).value("isAllyTurn") == 0
     battle.turn_owner = hero
     assert battle_sim.Resolver(battle, hero, None, context).value("isOwnersTurn") == 1
+
+
+def test_an_active_set_grants_its_skill(knowledge):
+    knowledge.raw["set_skills"] = {"Poison": [{"pieces": 4, "skill_id": 600001}]}
+    knowledge.raw["skills"]["600001"] = skill("Toxic", targets=None, effects=[{
+        **effect("ApplyDebuff", "RelationTarget", statuses=[("ContinuousDamage025p", 2)], chance=1.0,
+                 condition="isOwnerProduceRelatedEffect"),
+        "id": 6000011, "passive": True, "relation": {"effect_id": None, "kinds": ["Damage"], "phases": ["AfterDamageDealt"]},
+    }])
+    state = json.loads(json.dumps(STATE))
+    state["champions"][2]["calculated_stats"]["sets"] = [
+        {"set": "Poison", "name": "Toxic", "pieces": 4, "active": True, "series": False, "skill_effect": True}]
+    result = battle_sim.simulate_clan_boss(knowledge, state, [{"champion": "Tank"}], "Nightmare", "Void", runs=1, boss_turn_limit=4)
+    assert result["debuffs"]["ContinuousDamage025p"]["landed"] > 0
+    assert "Tank" not in result["not_simulated"]

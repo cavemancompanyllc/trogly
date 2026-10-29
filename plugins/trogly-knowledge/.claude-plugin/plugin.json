@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "trogly-knowledge",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "RAID: Shadow Legends facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs, damage formulas) and auras, every stage's enemies, boss kits, and boss stat boosts, a speed tune simulator for a team's turn order, and a Clan Boss battle simulator with team suggestions and a shareable report. Needs trogly-core.",
   "author": {
     "name": "Mike",

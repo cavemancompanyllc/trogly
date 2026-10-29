@@ -1049,11 +1049,13 @@ class Simulator:
             skills = self.skills_for(champion_type, champion.get("skill_levels") or {}, champion["name"])
             fighter = Fighter(champion["name"], "team", slot, champion["type_id"], champion_type.get("affinity"),
                               rarity_number(champion_type.get("rarity")), base, total, skills,
-                              self.passives_for(champion_type) + self.mastery_passives(champion))
+                              self.passives_for(champion_type) + self.mastery_passives(champion) + self.set_passives(champion))
             fighter.priority = self.labels(fighter, entry.get("priority"))
             fighter.never = set(self.labels(fighter, entry.get("never"), add_a1=False))
             fighter.delays = {label: int(turns) for label, turns in (entry.get("delay") or {}).items()}
-            fighter.lifesteal = 0.3 if any(s.get("active") and s.get("name") == "Lifesteal" for s in calculated.get("sets") or []) else 0.0
+            # Older knowledge files have no set skills; Lifesteal's 30% then stands in for its skill.
+            fighter.lifesteal = 0.3 if not self.knowledge.raw.get("set_skills") and any(
+                s.get("active") and s.get("name") == "Lifesteal" for s in calculated.get("sets") or []) else 0.0
             self.flag_unmodelled(fighter, champion, champion_type)
             fighters.append(fighter)
         return fighters
@@ -1127,6 +1129,22 @@ class Simulator:
                 passives.append({**effect, "skill_name": (skill or {}).get("name") or f"Mastery {mastery}", "mastery": str(mastery)})
         return passives
 
+    def set_passives(self, champion: dict[str, Any]) -> list[dict[str, Any]]:
+        """Skills the champion's complete artifact sets grant: a plain set's once its pieces are on, a series set's for the
+        highest piece count reached."""
+        set_skills = self.knowledge.raw.get("set_skills") or {}
+        passives = []
+        for item in (champion.get("calculated_stats") or {}).get("sets") or []:
+            granted = [g for g in set_skills.get(item.get("set") or "") or [] if g["pieces"] <= int(item.get("pieces") or 0)]
+            if not granted or not item.get("active"):
+                continue
+            chosen = granted[-1:] if item.get("series") else granted[:1]
+            for grant in chosen:
+                skill = self.knowledge.skills.get(str(grant["skill_id"])) or {}
+                for effect in skill.get("effects") or []:
+                    passives.append({**effect, "skill_name": f"{item.get('name')} set", "set": item.get("set")})
+        return passives
+
     def flag_unmodelled(self, fighter: Fighter, champion: dict[str, Any], champion_type: dict[str, Any]) -> None:
         for passive in fighter.passives:
             kind = passive["kind"]
@@ -1139,8 +1157,13 @@ class Simulator:
                 continue
             why = "no trigger in this knowledge file" if kind in TRIGGERED_KINDS and not phases else kind
             self.miss(fighter, f"passive {passive.get('skill_name')}: {why}")
+        set_skills = self.knowledge.raw.get("set_skills") or {}
         for item in (champion.get("calculated_stats") or {}).get("sets") or []:
-            if item.get("active") and item.get("skill_effect") and item.get("name") != "Lifesteal":
+            if not (item.get("active") and item.get("skill_effect")):
+                continue
+            if not set_skills and item.get("name") != "Lifesteal":
+                self.miss(fighter, f"{item.get('name')} set effect (this knowledge file predates set skills; run refresh_knowledge)")
+            elif set_skills and not set_skills.get(item.get("set") or ""):
                 self.miss(fighter, f"{item.get('name')} set effect")
         masteries = [str(m) for m in champion.get("masteries") or []]
         if masteries and not any(m in self.knowledge.skills for m in masteries):
@@ -1282,8 +1305,8 @@ def assumptions(sim: Simulator) -> list[str]:
         "damage as the game's DamageReductionByStatusEffects does.",
         "Poison is 5% or 2.5% of max HP and HP Burn 3% at the start of the holder's turn, before the boss's damage caps.",
         "Passives, masteries included, fire on the battle phases the game's data gives them (after a hit, after a skill, "
-        "at turn start or end, on a death); effects they cause don't set off further passives. Blessings and set "
-        "effects other than Lifesteal aren't simulated.",
+        "at turn start or end, on a death); effects they cause don't set off further passives. Artifact set skills run "
+        "the same way when the knowledge file has them. Blessings aren't simulated.",
     ]
     if sim.fallback_statuses:
         notes.append("This knowledge file predates the export of status effect types, so "
