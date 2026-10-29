@@ -95,6 +95,34 @@ def speed_tune(
 
 
 @mcp.tool()
+def clan_boss_teams(
+    teams: list[Any] | None = None,
+    count: int = 5,
+    runs: int = 10,
+    difficulty: str = "Nightmare",
+    affinity: str = "Void",
+    analysis: str = "claude",
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Simulates Clan Boss battles in code (no AI per turn) from the game's own rules and data, and writes an HTML
+    report to publish as an Artifact.
+
+    teams: optional list of teams to compare; each is a list of champion names (leader first) or
+    {"label", "champions": [...]}, and a champion can be {"champion", "priority": ["A3", "A1"], "never": ["A2"],
+    "delay": {"A3": 2}} to set its skill order. Without teams, Trogly suggests `count` teams from the roster: it plays
+    every five-champion team from the best boss champions a few times and keeps the strongest distinct ones (include /
+    exclude force or forbid champions). runs: battles per team (seeded, so teams face the same dice). difficulty: Easy,
+    Normal, Hard, Brutal, Nightmare, UltraNightmare. affinity: Void, Magic, Force, Spirit. analysis: "claude" (you
+    explain the returned digest), "ollama" (the local model writes the analysis; relay it), or "opus" (give the digest
+    to the battle-analyst agent). Publish report_file with the Artifact tool as is.
+    """
+    return _answer(lambda: Knowledge.load().clan_boss_teams(teams, count, runs, difficulty, affinity, analysis, include,
+                                                            exclude, title))
+
+
+@mcp.tool()
 def refresh_knowledge() -> dict[str, Any]:
     """Re-read champion kits and stages from the game. Needed only after a game update or when new champions are
     pulled (kits for newly owned champions); takes a few seconds with RAID open."""

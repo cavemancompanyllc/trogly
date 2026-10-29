@@ -14,6 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import battle_report
+import battle_sim
 import speed_tune as tuning
 
 KNOWLEDGE_RELATIVE_PATH = Path("data") / "knowledge" / "knowledge.json"
@@ -327,6 +329,26 @@ class Knowledge:
         try:
             return tuning.speed_tune(self, state, team, area, enemies, turns)
         except tuning.SpeedTuneError as error:
+            raise TroglyError(str(error)) from error
+
+    # Battle simulator
+
+    def clan_boss_teams(self, teams: list[Any] | None = None, count: int = 5, runs: int = 10, difficulty: str = "Nightmare",
+                        affinity: str = "Void", analysis: str = "claude", include: list[str] | None = None,
+                        exclude: list[str] | None = None, title: str | None = None, seed: int = 1,
+                        home: Path | None = None) -> dict[str, Any]:
+        """Simulates the given teams, or suggests `count` teams when none are given, then writes the report."""
+        home = home or instance_home()
+        state = _state(home)
+        runs = max(1, min(int(runs), battle_sim.MAX_RUNS))
+        try:
+            if teams:
+                results = battle_report.compare_teams(self, state, teams, difficulty, affinity, runs, seed)
+            else:
+                results = battle_report.suggest_teams(self, state, count, runs, difficulty, affinity, include=include,
+                                                      exclude=exclude, seed=seed)
+            return battle_report.finish(results, home, analysis, title)
+        except (battle_sim.BattleError, battle_report.ReportError) as error:
             raise TroglyError(str(error)) from error
 
     @staticmethod

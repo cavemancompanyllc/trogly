@@ -1,0 +1,265 @@
+<title>Clan Boss Battle Report</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@500;700&family=Alegreya+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; a ranking table whose rows share one damage scale, then one section per team. */
+:root {
+  --ground: #f5f5f8;
+  --panel: #ffffff;
+  --ink: #17151c;
+  --ink-2: #4a4656;
+  --ink-3: #6f6a7d;
+  --rule: #dcdae3;
+  --accent: #5b3fc4;
+  --accent-soft: #e6e1fa;
+  --boss: #b4441a;
+  --good: #1f7a3d;
+  --warn: #9a6400;
+  --font-display: "Alegreya SC", "Palatino Linotype", Georgia, serif;
+  --font-body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121017;
+    --panel: #1b1922;
+    --ink: #ecebf2;
+    --ink-2: #c4c0d2;
+    --ink-3: #9893aa;
+    --rule: #33303e;
+    --accent: #9d8af0;
+    --accent-soft: #2c2547;
+    --boss: #ef7a4a;
+    --good: #5cc581;
+    --warn: #e0a73a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121017;
+  --panel: #1b1922;
+  --ink: #ecebf2;
+  --ink-2: #c4c0d2;
+  --ink-3: #9893aa;
+  --rule: #33303e;
+  --accent: #9d8af0;
+  --accent-soft: #2c2547;
+  --boss: #ef7a4a;
+  --good: #5cc581;
+  --warn: #e0a73a;
+}
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 16px/1.5 var(--font-body);
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 980px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: 2.4rem; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 600 0.75rem/1 var(--font-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+header { display: grid; gap: 12px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--ink-2); }
+.facts b { color: var(--ink); font-weight: 600; }
+section { display: grid; gap: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 20px; display: grid; gap: 16px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th { text-align: left; font: 600 0.72rem/1.2 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 8px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+td { padding: 10px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+td.r, th.r { text-align: right; }
+tr:last-child td { border-bottom: 0; }
+.rank { font-family: var(--font-display); font-size: 1.3rem; color: var(--ink-3); width: 2ch; }
+.team-name { font-weight: 700; }
+.members { color: var(--ink-2); font-size: 0.88rem; }
+.strip { width: 100%; min-width: 220px; height: 30px; display: block; }
+.strip .band { fill: var(--accent-soft); }
+.strip .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.strip .mean { stroke: var(--ink); stroke-width: 2; }
+.strip .axis { fill: var(--ink-3); font: 10px var(--font-data); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 600 0.75rem/1 var(--font-data); padding: 4px 8px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-2); white-space: nowrap; }
+.chip.good { color: var(--good); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.analysis { border-left: 3px solid var(--accent); padding-left: 16px; display: grid; gap: 10px; }
+.analysis p { white-space: pre-wrap; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.bars { display: grid; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: minmax(90px, 160px) 1fr auto; gap: 10px; align-items: center; font-size: 0.9rem; }
+.bar-track { height: 10px; background: var(--rule); border-radius: 0 4px 4px 0; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
+details { border-top: 1px solid var(--rule); padding-top: 12px; }
+summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.timeline td { font-size: 0.85rem; }
+.who-boss { color: var(--boss); font-weight: 700; }
+ul.notes { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 4px; font-size: 0.9rem; }
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--ground); font: 12px/1.4 var(--font-data); padding: 6px 8px; border-radius: 4px; opacity: 0; transition: opacity 0.1s; z-index: 5; }
+@media (prefers-reduced-motion: reduce) { #tip { transition: none; } }
+</style>
+
+<script id="trogly-data" type="application/json">__TROGLY_DATA__</script>
+
+<main id="app">
+  <header>
+    <span class="eyebrow">Trogly battle simulator</span>
+    <h1 id="title">Clan Boss Battle Report</h1>
+    <div class="facts" id="facts"></div>
+  </header>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById("trogly-data").textContent);
+  const app = document.getElementById("app");
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
+  const short = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(Math.round(n));
+  const pct = (x) => (x * 100).toFixed(x < 0.1 ? 1 : 0) + "%";
+  const el = (tag, attrs = {}, ...kids) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "text" ? (node.textContent = v) : node.setAttribute(k, v);
+    for (const kid of kids) if (kid != null) node.append(kid);
+    return node;
+  };
+  const svg = (tag, attrs = {}) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    return node;
+  };
+  const tip = document.getElementById("tip");
+  const showTip = (event, text) => { tip.textContent = text; tip.style.left = event.clientX + 12 + "px"; tip.style.top = event.clientY + 12 + "px"; tip.style.opacity = 1; };
+  const hideTip = () => { tip.style.opacity = 0; };
+
+  const teams = [...data.teams].sort((a, b) => b.damage.mean - a.damage.mean);
+  document.getElementById("title").textContent = data.title || "Clan Boss Battle Report";
+  const facts = document.getElementById("facts");
+  const first = teams[0] || {};
+  [["Encounter", first.encounter], ["Teams", teams.length], ["Battles per team", first.runs], ["Seeded from", first.seed], ["Generated", data.generated_at]]
+    .filter(([, v]) => v != null && v !== "")
+    .forEach(([k, v]) => facts.append(el("span", {}, k + " ", el("b", { text: String(v) }))));
+
+  if (data.analysis && data.analysis.text) {
+    app.append(el("section", {}, el("div", { class: "analysis" },
+      el("span", { class: "eyebrow", text: "Analysis · " + (data.analysis.by || "") }),
+      el("p", { text: data.analysis.text }))));
+  }
+
+  // Ranking: one shared damage scale so every row's spread can be compared.
+  const max = Math.max(...teams.flatMap((t) => t.per_run), 1);
+  const W = 300, H = 30, PAD = 6;
+  const x = (v) => PAD + (v / max) * (W - 2 * PAD);
+  const ranking = el("table");
+  ranking.append(el("thead", {}, el("tr", {},
+    el("th", { text: "#" }), el("th", { text: "Team" }), el("th", { class: "r", text: "Mean" }),
+    el("th", { text: "Every battle (0 – " + short(max) + ")" }), el("th", { class: "r", text: "Boss turns" }), el("th", { text: "Coverage" }))));
+  const body = el("tbody");
+  teams.forEach((team, index) => {
+    const strip = svg("svg", { class: "strip", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-label": `${team.team}: ${team.per_run.length} battles from ${fmt(team.damage.min)} to ${fmt(team.damage.max)}` });
+    strip.append(svg("rect", { class: "band", x: x(team.damage.p10), y: 9, width: Math.max(x(team.damage.p90) - x(team.damage.p10), 2), height: 12, rx: 3 }));
+    strip.append(svg("line", { class: "mean", x1: x(team.damage.mean), x2: x(team.damage.mean), y1: 5, y2: 25 }));
+    team.per_run.forEach((value, run) => {
+      const dot = svg("circle", { class: "dot", cx: x(value), cy: 15, r: 4.5 });
+      dot.addEventListener("mousemove", (e) => showTip(e, `Battle ${run + 1}: ${fmt(value)}`));
+      dot.addEventListener("mouseleave", hideTip);
+      strip.append(dot);
+    });
+    const coverage = Math.min(...team.champions.map((c) => c.coverage));
+    body.append(el("tr", {},
+      el("td", { class: "rank", text: String(index + 1) }),
+      el("td", {}, el("div", { class: "team-name", text: team.label || team.team }),
+        team.label ? el("div", { class: "members", text: team.team }) : null),
+      el("td", { class: "r num", text: short(team.damage.mean) }),
+      el("td", {}, strip),
+      el("td", { class: "r num", text: `${team.boss_turns.mean}` }),
+      el("td", {}, el("span", { class: "chip " + (coverage >= 0.85 ? "good" : "warn"), text: "lowest " + pct(coverage) }))));
+  });
+  ranking.append(body);
+  app.append(el("section", {},
+    el("h2", { text: "Ranking" }),
+    el("p", { class: "members", text: "Dots are single battles, the shaded band runs from the 10th to the 90th percentile, and the line marks the mean. Coverage is the share of each champion's kit the simulator models; the chip shows the team's weakest champion." }),
+    el("div", { class: "panel scroll" }, ranking)));
+
+  teams.forEach((team, index) => {
+    const section = el("section", { id: "team-" + (index + 1) });
+    section.append(el("div", {}, el("span", { class: "eyebrow", text: "Team " + (index + 1) }), el("h2", { text: team.label || team.team })));
+    const summary = el("table");
+    summary.append(el("tbody", {}, ...[
+      ["Mean damage", fmt(team.damage.mean)], ["Median", fmt(team.damage.median)],
+      ["10th – 90th percentile", fmt(team.damage.p10) + " – " + fmt(team.damage.p90)],
+      ["Worst / best", fmt(team.damage.min) + " / " + fmt(team.damage.max)],
+      ["Boss turns survived", `${team.boss_turns.mean} (${team.boss_turns.min} – ${team.boss_turns.max})`],
+      ["Battles reaching the turn limit", `${team.reached_turn_limit} of ${team.runs}`],
+      ["First death", team.first_death.runs_with_a_death ? `${team.first_death.most_often}, earliest on boss turn ${team.first_death.earliest_boss_turn}` : "Nobody died"],
+    ].map(([k, v]) => el("tr", {}, el("td", { text: k }), el("td", { class: "r num", text: v })))));
+
+    const share = el("div", { class: "bars" });
+    const entries = Object.entries(team.damage_by_champion).sort((a, b) => b[1] - a[1]);
+    const top = Math.max(...entries.map(([, v]) => v), 1);
+    entries.forEach(([name, value]) => {
+      const fill = el("div", { class: "bar-fill" });
+      fill.style.width = (100 * value / top).toFixed(1) + "%";
+      const row = el("div", { class: "bar-row" }, el("span", { text: name }), el("div", { class: "bar-track" }, fill), el("span", { class: "num", text: short(value) }));
+      row.addEventListener("mousemove", (e) => showTip(e, `${name}: ${fmt(value)} per battle`));
+      row.addEventListener("mouseleave", hideTip);
+      share.append(row);
+    });
+
+    section.append(el("div", { class: "grid2" },
+      el("div", { class: "panel" }, el("h3", { text: "Results" }), summary),
+      el("div", { class: "panel" }, el("h3", { text: "Damage per champion" }), share)));
+
+    const debuffs = Object.entries(team.debuffs || {});
+    if (debuffs.length) {
+      const table = el("table");
+      table.append(el("thead", {}, el("tr", {}, ...["Debuff", "Tried", "Landed", "Resisted", "Chance missed", "Boss immune", "Resist rate"].map((h, i) => el("th", { class: i ? "r" : "", text: h })))));
+      table.append(el("tbody", {}, ...debuffs.map(([name, t]) => el("tr", {},
+        el("td", { text: name }), ...[t.attempted, t.landed, t.resisted, t.chance_failed, t.boss_immune].map((v) => el("td", { class: "r num", text: fmt(v) })),
+        el("td", { class: "r num", text: pct(t.resist_rate) })))));
+      section.append(el("div", { class: "panel" }, el("h3", { text: "Debuffs on the boss" }), el("div", { class: "scroll" }, table)));
+    }
+
+    const roster = el("table");
+    roster.append(el("thead", {}, el("tr", {}, ...["Champion", "SPD", "ACC", "C.RATE", "C.DMG", "Skill order", "Coverage"].map((h, i) => el("th", { class: i && i < 5 ? "r" : "", text: h })))));
+    roster.append(el("tbody", {}, ...team.champions.map((c) => el("tr", {},
+      el("td", { text: c.champion }),
+      el("td", { class: "r num", text: c.stats.speed.toFixed(1) }), el("td", { class: "r num", text: fmt(c.stats.accuracy) }),
+      el("td", { class: "r num", text: pct(c.stats.critical_chance) }), el("td", { class: "r num", text: pct(c.stats.critical_damage) }),
+      el("td", { class: "num", text: c.priority.join(" › ") }),
+      el("td", {}, el("span", { class: "chip " + (c.coverage >= 0.85 ? "good" : "warn"), text: pct(c.coverage) }))))));
+    section.append(el("div", { class: "panel" }, el("h3", { text: "Champions" }), el("div", { class: "scroll" }, roster)));
+
+    const missing = Object.entries(team.not_simulated || {});
+    const extras = el("div", { class: "panel" });
+    if (missing.length) {
+      const list = el("ul", { class: "notes" });
+      missing.forEach(([name, items]) => items.forEach((item) => list.append(el("li", { text: `${name}: ${item}` }))));
+      extras.append(el("details", {}, el("summary", { text: `Not simulated (${list.children.length})` }), list));
+    }
+    if (team.timeline && team.timeline.length) {
+      const t = el("table", { class: "timeline" });
+      t.append(el("thead", {}, el("tr", {}, ...["Tick", "Who", "Turn", "Skill", "What happened"].map((h) => el("th", { text: h })))));
+      t.append(el("tbody", {}, ...team.timeline.map((e) => el("tr", {},
+        el("td", { class: "num", text: e.tick }), el("td", { class: e.who === team.boss.name ? "who-boss" : "", text: e.who }),
+        el("td", { class: "num", text: e.turn }), el("td", { text: e.skill }), el("td", { text: e.events.join(" · ") })))));
+      extras.append(el("details", {}, el("summary", { text: `Turn by turn, battle 1 (${team.timeline.length} turns)` }), el("div", { class: "scroll" }, t)));
+    }
+    if (extras.children.length) section.append(extras);
+    app.append(section);
+  });
+
+  const assumed = (teams[0] && teams[0].assumed) || [];
+  if (assumed.length) {
+    const list = el("ul", { class: "notes" });
+    assumed.forEach((a) => list.append(el("li", { text: a })));
+    app.append(el("section", {}, el("h2", { text: "How these numbers were made" }), list));
+  }
+})();
+</script>
