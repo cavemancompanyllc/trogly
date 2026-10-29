@@ -39,9 +39,15 @@ FLAT_WEIGHT = 0.25
 # upgrade odds count the build's own stats).
 CRIT_STATS = ("C.RATE", "C.DMG")
 CRIT_WEIGHT = 0.5
-# The most valuable pieces in the game: SPD boots, then crit rate gloves. Their main stat is worth this many rolls
-# on top of the substats, and fewer good hits make one worth upgrading.
-PREMIUM_MAINS = {("Boots", "SPD"): 2.0, ("Gloves", "C.RATE"): 1.5}
+# Main stats worth this many rolls on top of the substats. SPD boots and crit rate gloves are the most valuable pieces
+# in the game, and fewer good hits make one worth upgrading. C.DMG gloves pay off once substats cap crit rate; an ACC
+# chest is a big share of a debuffer's ACC target; a RES chest helps in Arena and on tanks, but late bosses' ACC
+# outruns most RES builds.
+PREMIUM_MAINS = {
+    ("Boots", "SPD"): 2.0, ("Gloves", "C.RATE"): 1.5, ("Gloves", "C.DMG"): 1.0,
+    ("Chest", "ACC"): 0.75, ("Chest", "RES"): 0.5,
+}
+LOWER_BAR_MAINS = {("Boots", "SPD"), ("Gloves", "C.RATE")}
 GOOD_HITS = 5
 PREMIUM_GOOD_HITS = 4
 # Future rolls are counted as one roll unit on a 6-star piece; lower ranks roll smaller.
@@ -273,8 +279,8 @@ def _scored(raw: dict[str, Any], weights: dict[str, tuple[float, str]] | None = 
     artifact["set_weight"], artifact["set_tier"] = (weights or {}).get(raw["set"], (NO_SET_WEIGHT, "-"))
     factor = _set_factor(artifact["set_weight"])
     premium = PREMIUM_MAINS.get((raw["slot"], main), 0.0)
-    artifact["premium"] = premium > 0
-    good_hits = PREMIUM_GOOD_HITS if premium else GOOD_HITS
+    artifact["premium"] = (raw["slot"], main) in LOWER_BAR_MAINS
+    good_hits = PREMIUM_GOOD_HITS if artifact["premium"] else GOOD_HITS
     artifact["profiles"], artifact["good_chance"] = {}, {}
     for name, profile in PROFILES.items():
         if not _main_fits(artifact, profile["stats"], profile["mains"]):
