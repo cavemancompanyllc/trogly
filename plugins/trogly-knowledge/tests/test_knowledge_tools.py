@@ -176,7 +176,7 @@ def test_team_candidates_show_masteries_blessing_and_where_the_lead_works(knowle
     assert thor["masteries"] == {"count": 4, "capstone": "Warmaster",
                                  "trees": {"Offense": ["Deadly Precision", "Warmaster"], "Defense": ["Tough Skin"],
                                            "Support": ["Lore of Steel"]}}
-    assert thor["blessing"] == "NatureBalance"
+    assert thor["blessing"] == {"code": "NatureBalance"}
     assert thor["leader_skill"] == [{"aura": "SPD +16% in Dungeon", "works_here": False}]
     assert fayne["masteries"] is None and fayne["blessing"] is None and fayne["leader_skill"] is None
     in_dungeon = k.team_candidates("Phantom Shogun", 20, home=home)["candidates"]
@@ -191,3 +191,39 @@ def test_team_candidates_respect_min_stars(knowledge):
 def test_scaling_reads_own_stats_and_enemy_hp():
     assert knowledge_tools._scaling_of("3.2*ATK+0.1*TRG_HP") == {"ATK", "enemy HP"}
     assert knowledge_tools._scaling_of("4*DEF") == {"DEF"}
+
+
+def _with(home, **extra):
+    raw = {**KNOWLEDGE, **extra}
+    (home / "data" / "knowledge" / "knowledge.json").write_text(json.dumps(raw), encoding="utf-8")
+    return Knowledge.load(home)
+
+
+def test_blessing_shows_its_in_game_name_and_skill_when_the_knowledge_file_has_it(knowledge):
+    home, _ = knowledge
+    k = _with(home, blessing_skills={"5201": [{"grade": 1, "skill_id": 90001}, {"grade": 4, "skill_id": 90004}]},
+              skills={**KNOWLEDGE["skills"],
+                      "90001": {"name": "Brimstone", "description": "Weak smite.", "cooldown": 0, "effects": []},
+                      "90004": {"name": "Brimstone", "description": "Strong smite.", "cooldown": 0, "effects": []}})
+    thor = next(c for c in k.team_candidates("DoomTower2", 57, "Hard", home=home)["candidates"] if c["champion"] == "Thor Faehammer")
+    # Thor has awakening 0 in the fixture: below grade 1, so the first grade's skill is shown with a note.
+    assert thor["blessing"]["name"] == "Brimstone" and thor["blessing"]["effect"] == "Weak smite."
+    assert "needs awakening 1" in thor["blessing"]["effect_note"]
+
+
+def test_enemy_names_pick_the_doom_tower_rotation(knowledge):
+    home, _ = knowledge
+    other = {"id": 703, "code": "DoomTower3", "name": "DoomTower3", "area": "DoomTower",
+             "difficulties": {"Hard": [{"id": 7032057, "number": 57, "champion_slots": 5, "has_boss": False, "modifiers": [],
+                                        "enemies": [{"wave": 1, "type_id": 4636, "name": "Tormin the Cold", "stars": 6, "level": 270, "is_boss": False}]}]}}
+    k = _with(home, regions=[*KNOWLEDGE["regions"], other])
+
+    ambiguous = k.find_stage("Doom Tower", 57, "Hard")
+    assert ambiguous["ambiguous"] and ambiguous["lineups"] == {
+        "DoomTower2": ["wave 1: Ghostborn, Ghostborn", "wave 2: Tormin the Cold"],
+        "DoomTower3": ["wave 1: Tormin the Cold"],
+    }
+    assert k.find_stage("Doom Tower", 57, "Hard", enemies=["ghostborn", "Tormin"])["place"] == "DoomTower2"
+    assert k.team_candidates("Doom Tower", 57, "Hard", home=home, enemies=["Ghostborn"])["place"] == "DoomTower2"
+    with pytest.raises(TroglyError, match="has all of"):
+        k.find_stage("Doom Tower", 57, "Hard", enemies=["Kytis"])

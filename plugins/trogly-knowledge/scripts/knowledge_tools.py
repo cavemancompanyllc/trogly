@@ -183,13 +183,30 @@ class Knowledge:
 
     # Stages
 
-    def find_stage(self, location: str, stage: int | None = None, difficulty: str = "") -> dict[str, Any]:
+    def find_stage(self, location: str, stage: int | None = None, difficulty: str = "",
+                   enemies: list[str] | None = None) -> dict[str, Any]:
         regions = self._find_regions(location)
         if not regions:
             raise TroglyError(f"No dungeon, region, or boss called '{location}'. Try the boss name or the dungeon name.")
+        if len(regions) > 1 and stage is not None and enemies:
+            # Places that rotate (Doom Tower) share a name; the enemies the player sees pick the live rotation.
+            wanted = [name.strip().lower() for name in enemies if name.strip()]
+            matching = [r for r in regions if (s := self._stage_or_none(r, stage, difficulty))
+                        and all(any(w in e["name"].lower() for e in s["enemies"]) for w in wanted)]
+            if not matching:
+                raise TroglyError(f"No stage {stage} of {', '.join(self._region_label(r) for r in regions)} has all of: "
+                                  f"{', '.join(enemies)}. Check the names against the lineups.")
+            regions = matching
         if len(regions) > 1:
-            return {"ambiguous": True, "message": "Several places match. Ask which one.",
-                    "candidates": [self._region_label(r) for r in regions[:DEFAULT_LIMIT]]}
+            answer: dict[str, Any] = {"ambiguous": True, "message": "Several places match. Ask which one.",
+                                      "candidates": [self._region_label(r) for r in regions[:DEFAULT_LIMIT]]}
+            lineups = {self._region_label(r): self._lineup(s) for r in regions[:DEFAULT_LIMIT]
+                       if stage is not None and (s := self._stage_or_none(r, stage, difficulty))}
+            if lineups:
+                answer["message"] = (f"Several places match, each with a different stage {stage}. Ask the player "
+                                     "which enemies they see, then pass a few names as enemies.")
+                answer["lineups"] = lineups
+            return answer
         region = regions[0]
         difficulties = region["difficulties"]
         if difficulty:
@@ -238,6 +255,20 @@ class Knowledge:
             "exported_at": self.raw.get("exported_at"),
         }
 
+    @staticmethod
+    def _stage_or_none(region: dict[str, Any], stage: int, difficulty: str) -> dict[str, Any] | None:
+        difficulties = region["difficulties"]
+        if difficulty:
+            key = next((d for d in difficulties if d.lower() == difficulty.lower()), None)
+        else:
+            key = max(difficulties, key=lambda d: len(difficulties[d])) if difficulties else None
+        return next((s for s in difficulties.get(key) or [] if s["number"] == stage), None)
+
+    @staticmethod
+    def _lineup(stage: dict[str, Any]) -> list[str]:
+        waves = sorted({e["wave"] for e in stage["enemies"]})
+        return [f"wave {wave}: " + ", ".join(e["name"] for e in stage["enemies"] if e["wave"] == wave) for wave in waves]
+
     def _affinity_counts(self, enemies: list[dict[str, Any]]) -> dict[str, int]:
         counts: dict[str, int] = {}
         for enemy in enemies:
@@ -261,9 +292,10 @@ class Knowledge:
         min_stars: int = 6,
         limit: int = 40,
         home: Path | None = None,
+        enemies: list[str] | None = None,
     ) -> dict[str, Any]:
         """The stage's facts plus every owned champion who could fit, with what matters for picking a team."""
-        found = self.find_stage(location, stage, difficulty)
+        found = self.find_stage(location, stage, difficulty, enemies)
         if found.get("ambiguous") or "boss_kits" not in found:
             return found
         boss = found["boss_kits"][0] if found["boss_kits"] else None
@@ -296,7 +328,7 @@ class Knowledge:
                 "role": champion_type["role"],
                 "stats": best["stats"],
                 "masteries": _mastery_view(best["masteries"]),
-                "blessing": BLESSING_CODES.get(best["blessing_id"], best["blessing_id"]) if best["blessing_id"] else None,
+                "blessing": self._blessing_view(best["blessing_id"], best["awakening"] or 0),
                 "leader_skill": [self._leader_view(aura, found["area"]) for aura in champion_type.get("leader_skills") or []] or None,
                 "kit": self._kit_summary(champion_type),
             })
@@ -327,8 +359,9 @@ class Knowledge:
                  "This stage has no boss: candidates are ranked by hits_on_enemies, how many of the stage's enemies "
                  "(all waves) each one hits strong, normal, or weak. ")
                 + "Stats are Trogly's calculated stats (checked against the game's champion screens and battle stats), "
-                "masteries and blessing included. masteries.capstone is the tier-6 mastery. blessing is the game's "
-                "internal code; its in-game name and effect aren't known to Trogly yet. leader_skill.works_here says "
+                "masteries and blessing included. masteries.capstone is the tier-6 mastery. blessing has its in-game name "
+                "and skill text when the knowledge file has them; with only a code, its effect isn't known (refresh "
+                "the knowledge file to get it). leader_skill.works_here says "
                 "whether the lead applies in this area. Kit summaries come from the game's skill data; read "
                 "boss.skills passives for immunities and counters before picking."
             ),
@@ -423,6 +456,22 @@ class Knowledge:
             "aura": f"{stat} {amount}{' for ' + who + ' allies' if who else ''} in {aura.get('area') or 'all battles'}",
             "works_in_arena": tuning.aura_applies(aura, "Arena"),
         }
+
+    def _blessing_view(self, blessing_id: int | None, awakening: int) -> dict[str, Any] | None:
+        """The blessing by its in-game name and skill text when the knowledge file has blessing skills, else its code."""
+        if not blessing_id:
+            return None
+        view: dict[str, Any] = {"code": BLESSING_CODES.get(blessing_id, str(blessing_id))}
+        grades = (self.raw.get("blessing_skills") or {}).get(str(blessing_id)) or []
+        reached = [grade for grade in grades if grade["grade"] <= awakening]
+        shown = reached[-1] if reached else grades[0] if grades else None
+        skill = self.skills.get(str(shown["skill_id"])) if shown else None
+        if skill and skill.get("name"):
+            view["name"] = skill["name"]
+            view["effect"] = skill.get("description")
+            if not reached:
+                view["effect_note"] = f"needs awakening {grades[0]['grade']} to unlock; this champion is at {awakening}"
+        return view
 
     @staticmethod
     def _leader_view(aura: dict[str, Any], area: str) -> dict[str, Any]:

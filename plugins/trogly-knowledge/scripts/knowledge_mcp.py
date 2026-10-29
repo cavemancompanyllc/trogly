@@ -48,25 +48,31 @@ def search_kits(effect: str, owned_only: bool = True, limit: int = 25) -> dict[s
 
 
 @mcp.tool()
-def find_stage(location: str, stage: int | None = None, difficulty: str = "") -> dict[str, Any]:
+def find_stage(location: str, stage: int | None = None, difficulty: str = "", enemies: list[str] | None = None) -> dict[str, Any]:
     """A dungeon or other stage from the game's own data: enemies by wave, the boss's full kit, stage modifiers
     (the boss's extra stats), and how many champions the player brings. location: dungeon, region, or boss name
     (e.g. "Phantom Shogun", "Dragon", "Ice Golem", "Doom Tower"). stage: the stage number. difficulty: Normal, Hard,
     Brutal, or Nightmare where the place has them (most dungeons have one track). With a stage, `encounter` is the
-    key to save builds under (trogly-core `loadouts`)."""
-    return _answer(lambda: Knowledge.load().find_stage(location, stage, difficulty))
+    key to save builds under (trogly-core `loadouts`). enemies: a few enemy names the player sees, to pick between
+    places that share a name, such as Doom Tower's rotations; when several still match, the answer lists each one's
+    lineup for that stage."""
+    return _answer(lambda: Knowledge.load().find_stage(location, stage, difficulty, enemies))
 
 
 @mcp.tool()
-def team_candidates(location: str, stage: int, difficulty: str = "", min_stars: int = 6, limit: int = 40) -> dict[str, Any]:
+def team_candidates(location: str, stage: int, difficulty: str = "", min_stars: int = 6, limit: int = 40,
+                    enemies: list[str] | None = None) -> dict[str, Any]:
     """Everything needed to pick a team for one stage: team size, waves, the boss's full kit and affinity matchup,
     stage modifiers, enemy affinities per wave, and the player's owned champions (best copy of each, min_stars and up)
     ranked by how they hit the boss (strong, normal, weak), or on a stage without a boss by how many of the wave
     enemies they hit strong or weak (hits_on_enemies), then awakening and stars. Each candidate has calculated stats,
-    masteries by name (capstone = tier 6), blessing (game code), leader skill with works_here for this stage's area,
+    masteries by name (capstone = tier 6), blessing (in-game name and skill text when known, else the game code),
+    leader skill with works_here for this stage's area,
     and a kit summary: skills with cooldowns, buffs it places on allies, debuffs on enemies, other abilities (heal,
-    revive, cleanse, turn meter, ...), and what its damage scales with."""
-    return _answer(lambda: Knowledge.load().team_candidates(location, stage, difficulty, min_stars, limit))
+    revive, cleanse, turn meter, ...), and what its damage scales with. enemies: as for find_stage, to pick Doom
+    Tower's rotation."""
+    return _answer(lambda: Knowledge.load().team_candidates(location, stage, difficulty, min_stars, limit,
+                                                            enemies=enemies))
 
 
 @mcp.tool()
