@@ -132,6 +132,46 @@ def optimize_gear(
     return result
 
 
+def optimize_team_gear(
+    members: list[dict[str, Any]],
+    use_other_champions_gear: bool = False,
+    never_take_from: list[str] | None = None,
+    time_limit_seconds: float = 10,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Gears a team one champion at a time, in the order given (put the carry first). Pieces chosen for earlier
+    champions are off-limits for later ones, so no piece is used twice."""
+    if not members:
+        raise TroglyError("Give the team in priority order, each with a champion and a stat to maximize.")
+    taken: list[str] = []
+    results = []
+    for member in members:
+        result = optimize_gear(
+            member["champion"], member["maximize"], member.get("minimum"), member.get("maximum"),
+            member.get("require_sets"), member.get("allowed_sets"), use_other_champions_gear, never_take_from,
+            exclude_artifacts=taken, results=1, time_limit_seconds=time_limit_seconds, home=home)
+        loadout = (result["loadouts"] or [None])[0]
+        if loadout:
+            taken += [piece["artifact_id"] for piece in loadout["pieces"]]
+        results.append({
+            "champion": result["champion"],
+            "request": result["request"],
+            "current_stats": result["current_stats"],
+            "loadout": loadout,
+            "message": result.get("message"),
+        })
+    borrowed = [
+        {"piece": piece["artifact_id"], "slot": piece["slot"], "to": entry["champion"], "from": piece["taken_from"]}
+        for entry in results if entry["loadout"] for piece in entry["loadout"]["pieces"] if piece.get("taken_from")
+    ]
+    return {
+        "team": results,
+        "pieces_moved_between_champions": borrowed,
+        "unsolved": [entry["champion"] for entry in results if not entry["loadout"]],
+        "note": NOTE + " Earlier champions get first pick; reorder the team to change who has priority.",
+    }
+
+
 def _explain_loadout(loadout: dict[str, Any], artifacts: dict[str, dict[str, Any]], champion: dict[str, Any]) -> dict[str, Any]:
     worn = champion.get("equipped_artifact_ids") or {}
     pieces = []

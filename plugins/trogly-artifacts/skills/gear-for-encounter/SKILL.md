@@ -36,8 +36,12 @@ stage (`general:fire_knight_hard_1`).
 For one champion, delegate to the `gear-smith` subagent with the champion, the encounter key, the goal in the
 player's words, and champions whose gear must not be touched. gear-smith turns the encounter into stat targets.
 
-For a team, gear one champion at a time in priority order (the carry or the speed lead first), and protect each
-finished champion with `never_take_from` for the next one.
+Before choosing sets, run `set_advice` with the champion and the encounter key. It reads the boss kits: sets
+whose debuff the boss is immune to are worth nothing there, and sets that answer a boss mechanic (Destroy against
+Borgoth) go to the top. Pass its best sets to gear-smith.
+
+For a team, use `optimize_team_gear` with the members in priority order (the carry or the speed lead first). No
+piece is used twice.
 
 ## 4. Save it
 

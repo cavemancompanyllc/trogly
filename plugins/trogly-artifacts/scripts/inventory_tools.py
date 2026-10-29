@@ -8,6 +8,8 @@ Stdlib only; `artifacts_mcp.py` is the MCP wrapper. Scores come from fixed rules
 - Gloves, Chest, and Boots only fit a profile when their main stat suits it (a flat ATK glove fits none).
 - Pieces below level 16 are scored on their expected value at 16, with the odds of the remaining upgrades worked
   out exactly (see `_hit_distribution`).
+- The set counts too: scores are scaled by the set's tier weight (`set_tools`), so the same stats on Stone Skin beat
+  them on Life, and better sets keep more spares.
 
 Trogly never sells or upgrades anything; these are lists for the player.
 """
@@ -18,6 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import set_tools
 from artifacts_tools import SHORT_STAT, SLOT_NAMES, TroglyError, _bonus_text, _load_state, instance_home
 
 RARITY_NAMES = {1: "Common", 2: "Uncommon", 3: "Rare", 4: "Epic", 5: "Legendary", 6: "Mythical"}
@@ -33,6 +36,9 @@ ROLL_UNIT = {
 FLAT_WEIGHT = 0.25
 # Future rolls are counted as one roll unit on a 6-star piece; lower ranks roll smaller.
 RANK_ROLL_FACTOR = {6: 1.0, 5: 0.8, 4: 0.6, 3: 0.45, 2: 0.3, 1: 0.2}
+# Score = stat score x (SET_FLOOR + (1 - SET_FLOOR) x set weight): stats still matter most, the set breaks ties.
+SET_FLOOR = 0.6
+NO_SET_WEIGHT = 0.45
 FLAT_OF = {"ATK%": "ATK", "HP%": "HP", "DEF%": "DEF"}
 MAIN_CHECKED_SLOTS = ("Gloves", "Chest", "Boots")
 PROFILES: dict[str, dict[str, Any]] = {
@@ -74,10 +80,12 @@ def sell_candidates(
     home: Path | None = None,
 ) -> dict[str, Any]:
     """Splits the vault (unworn pieces) into keep, upgrade first, and sell."""
-    state = _load_state(home or instance_home())
+    home = home or instance_home()
+    state = _load_state(home)
+    weights = _set_weights(home)
     protected = {str(i) for i in protected_artifact_ids or []}
     worn = _worn_ids(state)
-    vault = [_scored(a) for a in state.get("artifacts") or [] if a["id"] not in worn]
+    vault = [_scored(a, weights) for a in state.get("artifacts") or [] if a["id"] not in worn]
 
     keep_reasons: dict[str, str] = {}
     for artifact in vault:
@@ -90,8 +98,9 @@ def sell_candidates(
             for rank, artifact in enumerate(in_slot[:keep_per_slot], start=1):
                 keep_reasons.setdefault(artifact["id"], f"#{rank} {profile} {_slot(slot)} in the vault")
             for set_name in {a["set_name"] for a in in_slot}:
+                spares = _spares(keep_per_set, next(a["set_weight"] for a in in_slot if a["set_name"] == set_name))
                 same_set = [a for a in in_slot
-                            if a["set_name"] == set_name and a["profiles"][profile] >= set_keep_min_score][:keep_per_set]
+                            if a["set_name"] == set_name and a["profiles"][profile] >= set_keep_min_score][:spares]
                 for rank, artifact in enumerate(same_set, start=1):
                     keep_reasons.setdefault(artifact["id"], f"#{rank} {set_name} {_slot(slot)} for {profile}")
 
@@ -100,7 +109,8 @@ def sell_candidates(
         if artifact["id"] in keep_reasons:
             continue
         best = artifact["best_profile"]
-        if artifact["level"] < 16 and best and artifact["good_chance"][best] >= upgrade_chance:
+        # Odds weighed by the set: a long shot on a top set can be worth it, the same odds on a weak set aren't.
+        if artifact["level"] < 16 and best and artifact["good_chance"][best] * _set_factor(artifact["set_weight"]) >= upgrade_chance:
             upgrade_first.append(artifact)
         else:
             sell.append(artifact)
@@ -136,7 +146,9 @@ def upgrade_candidates(
     home: Path | None = None,
 ) -> dict[str, Any]:
     """Ranks pieces below level 16 by the chance their remaining upgrades land on the wanted stats."""
-    state = _load_state(home or instance_home())
+    home = home or instance_home()
+    state = _load_state(home)
+    weights = _set_weights(home)
     wanted = _wanted(profile, stats)
     owners = _owners(state)
     set_filter = {s.lower() for s in sets or []}
@@ -151,7 +163,7 @@ def upgrade_candidates(
             continue
         if slot_filter and raw["slot"].lower() not in slot_filter:
             continue
-        artifact = _scored(raw)
+        artifact = _scored(raw, weights)
         options = [wanted] if wanted else [p for p in PROFILES if artifact["profiles"][p] is not None]
         if wanted and not _main_fits(artifact, wanted):
             continue
@@ -159,7 +171,8 @@ def upgrade_candidates(
             chances = _hit_distribution_for(artifact, option)
             row = _upgrade_row(artifact, option, min_hits)
             row["worn_by"] = owners.get(raw["id"])
-            row["_sort"] = (sum(p for hits, p in chances.items() if hits >= min_hits), row["expected_hits"])
+            chance = sum(p for hits, p in chances.items() if hits >= min_hits)
+            row["_sort"] = (chance * _set_factor(artifact["set_weight"]), row["expected_hits"])
             rows.append(row)
     best: dict[str, dict[str, Any]] = {}
     for row in sorted(rows, key=lambda r: r["_sort"], reverse=True):
@@ -174,16 +187,72 @@ def upgrade_candidates(
         "candidates": ranked,
         "how_to_read": (
             "hits = useful substats plus useful rolls into them at level 16. chance_of_min_hits is the chance of "
-            "ending with at least min_hits. A level-0 Legendary can end with up to 8 hits, an Epic 7, a Rare 6."
+            "ending with at least min_hits. A level-0 Legendary can end with up to 8 hits, an Epic 7, a Rare 6. "
+            "Ranking also weighs the set's tier, so a better set wins between similar odds."
         ),
         "note": NOTE,
+    }
+
+
+def rank_set_pieces(
+    set_name: str,
+    profile: str = "",
+    stats: list[str] | None = None,
+    top: int = 3,
+    include_worn: bool = True,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """The best pieces of one set in every slot for a build profile or a list of wanted stats."""
+    home = home or instance_home()
+    state = _load_state(home)
+    entry = set_tools.find_set(set_tools.catalog(home), set_name)
+    wanted = _wanted(profile, stats) or PROFILES["attack"]["stats"]
+    mains = PROFILES[profile.lower()]["mains"] if profile and not stats else None
+    owners = _owners(state)
+    by_slot: dict[str, list[dict[str, Any]]] = {}
+    for raw in state.get("artifacts") or []:
+        if raw["set"] != entry["code"] or (not include_worn and raw["id"] in owners):
+            continue
+        artifact = _scored(raw, {entry["code"]: (entry["weight"], entry["tier"])})
+        if not _main_fits(artifact, wanted, mains):
+            continue
+        distribution = _hit_distribution_for(artifact, wanted)
+        expected_new = sum(h * p for h, p in distribution.items()) - _hits(artifact["subs"], wanted)
+        score = _units(artifact["subs"], wanted) + expected_new * RANK_ROLL_FACTOR.get(raw["rank"], 0.2)
+        by_slot.setdefault(_slot(raw["slot"]), []).append(
+            {**_piece(artifact), "score": round(score, 1), "worn_by": owners.get(raw["id"])})
+    slots = {slot: sorted(rows, key=lambda r: -r["score"])[:top] for slot, rows in sorted(by_slot.items())}
+    return {
+        "set": entry["name"],
+        "tier": entry["tier"],
+        "pieces_for_bonus": entry["effect_pieces"],
+        "wanted": _wanted_label(wanted, profile, stats),
+        "slots_covered": len(slots),
+        "best_by_slot": slots,
+        "note": "score = useful substats in roll units, plus expected future rolls for pieces below level 16. "
+                "Use optimize_gear with require_sets to build the exact loadout.",
     }
 
 
 # Scoring
 
 
-def _scored(raw: dict[str, Any]) -> dict[str, Any]:
+def _set_weights(home: Path) -> dict[str, tuple[float, str]]:
+    return {code: (entry["weight"], entry["tier"]) for code, entry in set_tools.catalog(home).items()}
+
+
+def _set_factor(weight: float) -> float:
+    return SET_FLOOR + (1 - SET_FLOOR) * weight
+
+
+def _spares(keep_per_set: int, weight: float) -> int:
+    # Top sets keep the full number of spares, middling sets one, the bottom tier none.
+    if weight >= 0.6:
+        return keep_per_set
+    return min(1, keep_per_set) if weight >= 0.25 else 0
+
+
+def _scored(raw: dict[str, Any], weights: dict[str, tuple[float, str]] | None = None) -> dict[str, Any]:
     main = _stat_key(raw["primary_stat"]) if raw.get("primary_stat") else ""
     subs = [(_stat_key(b), float(b.get("value", 0)) + float(b.get("glyph") or 0), int(b.get("rolls") or 0))
             for b in raw.get("substats") or []]
@@ -191,6 +260,8 @@ def _scored(raw: dict[str, Any]) -> dict[str, Any]:
         "id": raw["id"], "slot": raw["slot"], "set_name": raw.get("set_name") or raw["set"], "rank": raw["rank"],
         "rarity": raw["rarity"], "level": raw["level"], "main": main, "subs": subs, "raw": raw,
     }
+    artifact["set_weight"], artifact["set_tier"] = (weights or {}).get(raw["set"], (NO_SET_WEIGHT, "-"))
+    factor = _set_factor(artifact["set_weight"])
     artifact["profiles"], artifact["good_chance"] = {}, {}
     for name, profile in PROFILES.items():
         if not _main_fits(artifact, profile["stats"], profile["mains"]):
@@ -199,7 +270,7 @@ def _scored(raw: dict[str, Any]) -> dict[str, Any]:
         now = _units(subs, profile["stats"])
         distribution = _hit_distribution_for(artifact, profile["stats"])
         expected_new_hits = sum(h * p for h, p in distribution.items()) - _hits(subs, profile["stats"])
-        artifact["profiles"][name] = now + expected_new_hits * RANK_ROLL_FACTOR.get(raw["rank"], 0.2)
+        artifact["profiles"][name] = (now + expected_new_hits * RANK_ROLL_FACTOR.get(raw["rank"], 0.2)) * factor
         artifact["good_chance"][name] = sum(p for h, p in distribution.items() if h >= 5)
     fitting = {n: s for n, s in artifact["profiles"].items() if s is not None}
     artifact["best_profile"] = max(fitting, key=fitting.get) if fitting else None
@@ -306,6 +377,7 @@ def _piece(artifact: dict[str, Any]) -> dict[str, Any]:
         "id": artifact["id"],
         "slot": _slot(artifact["slot"]),
         "set": "no set" if artifact["set_name"] == "None" else artifact["set_name"],
+        "set_tier": artifact["set_tier"],
         "stars": artifact["rank"],
         "rarity": RARITY_NAMES.get(artifact["rarity"], artifact["rarity"]),
         "level": artifact["level"],
