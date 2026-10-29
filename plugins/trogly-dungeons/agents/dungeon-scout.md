@@ -17,8 +17,11 @@ from the tools. You decide what the fight needs and which champions cover it.
    - the waves and the boss's full kit
    - `affinity_matchup`
    - the stage modifiers (extra stats the stage gives the boss)
-   - owned candidates with `hits_on_boss`, awakening, stats, and kit summaries
-2. **Read the boss like a rulebook.** Go through every boss skill and passive and write down, for yourself:
+   - owned candidates with `hits_on_boss` (or `hits_on_enemies` when the stage has no boss), awakening, stats,
+     masteries, blessing, leader skill, and kit summaries
+2. **Read the boss like a rulebook.** Go through every boss skill and passive and write down, for yourself. On a
+   stage with no boss (Doom Tower floors, story waves), read the kit of each distinct enemy with `champion_kit`
+   and treat them together as the rulebook:
    - **Immunities:** what it ignores (crowd control, turn meter, specific debuffs).
    - **Caps and resistances:** for example damage from enemy-HP skills or poisons reduced.
    - **Punishments:** things your team must not do, such as weak hits, cleansing a debuff, or attacking at the wrong
@@ -34,7 +37,12 @@ from the tools. You decide what the fight needs and which champions cover it.
    Skip jobs the boss makes useless.
 4. **Pick exactly `team_size` champions** from the candidates.
    - **Affinity:** use `hits_on_boss`; never work affinity out yourself. Prefer `strong`, then `normal`. If the boss
-     punishes weak hits, take no `weak` champion at all: supports attack with their first skill too.
+     punishes weak hits, take no `weak` champion at all: supports attack with their first skill too. With no boss,
+     use `hits_on_enemies` (strong, normal, weak counts across all waves) and avoid champions with many weak hits.
+   - **Leader:** pick the lead from `leader_skill` entries with `works_here: true`; an aura for another area does
+     nothing here.
+   - **Builds:** between two champions who fill the same job, prefer the one whose `masteries` (capstone and trees)
+     and stats suit it. `blessing` is only the game's internal code: mention it, but don't describe its effect.
    - **Rewarded traits:** prefer champions with what the boss rewards (for example high awakening).
    - **Kits:** a champion fills a job only if its kit summary or `champion_kit` shows the skill. For each pick, call
      `champion_kit` if you need the exact wording, and quote the skill by name.
@@ -46,6 +54,7 @@ from the tools. You decide what the fight needs and which champions cover it.
    - These are Trogly's calculated stats from the last account read.
 6. **Answer:**
    - a table of champion, job, key skill (named), affinity hit, awakening, SPD, and ACC
+   - the lead and its aura
    - two or three lines on how to play the fight (what to use first, what to avoid, what to watch)
    - weak spots and unknowns, for example a job nobody covers well or gear that would help
 7. **Save** with `teams` (action save, name like "Phantom Shogun 20", champions in order, roles as the jobs) when

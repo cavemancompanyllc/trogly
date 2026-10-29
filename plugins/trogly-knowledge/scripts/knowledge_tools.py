@@ -30,6 +30,39 @@ PLACE_ALIASES = {"fireknight": "FireGolemCave", "fireknightscastle": "FireGolemC
 # it. Void is neutral against everything (and nothing is strong or weak against it).
 BEATS = {"Magic": "Spirit", "Spirit": "Force", "Force": "Magic"}
 
+# MasteryKindId: a mastery id is also its skill id. Tier 6 (the capstone) is the 5001x6x block.
+MASTERY_NAMES = {
+    500112: "Blade Disciple", 500113: "Deadly Precision", 500121: "Heart of Glory", 500122: "Keen Strike",
+    500123: "Shield Breaker", 500124: "Grim Resolve", 500131: "Single Out", 500132: "Life Drinker",
+    500133: "Whirlwind of Death", 500134: "Ruthless Ambush", 500141: "Bring It Down", 500142: "Wrath of the Slain",
+    500143: "Cycle of Violence", 500144: "Opportunist", 500151: "Methodical", 500152: "Kill Streak",
+    500153: "Blood Shield", 500154: "Stoked to Fury", 500161: "Warmaster", 500162: "Helmsmasher",
+    500163: "Giant Slayer", 500164: "Flawless Execution",
+    500212: "Tough Skin", 500213: "Defiant", 500221: "Blastproof", 500222: "Rejuvenation", 500223: "Mighty Endurance",
+    500224: "Improved Parry", 500231: "Shadow Heal", 500232: "Resurgent", 500233: "Bloodthirst",
+    500234: "Wisdom of Battle", 500241: "Solidarity", 500242: "Delay Death", 500243: "Harvest Despair",
+    500244: "Stubbornness", 500251: "Selfless Defender", 500252: "Cycle of Revenge", 500253: "Retribution",
+    500254: "Deterrence", 500261: "Iron Skin", 500262: "Bulwark", 500263: "Fearsome Presence", 500264: "Unshakeable",
+    500312: "Steadfast", 500313: "Pinpoint Accuracy", 500321: "Lay On Hands", 500322: "Shieldbearer",
+    500323: "Exalt in Death", 500324: "Charged Focus", 500331: "Healing Savior", 500332: "Rapid Response",
+    500333: "Swarm Smiter", 500334: "Arcane Celerity", 500341: "Merciful Aid", 500342: "Cycle of Magic",
+    500343: "Lore of Steel", 500344: "Evil Eye", 500351: "Lasting Gifts", 500352: "Spirit Haste", 500353: "Sniper",
+    500354: "Master Hexer", 500361: "Elixir of Life", 500362: "Timely Intervention", 500363: "Oppressor",
+    500364: "Eagle Eye",
+}
+MASTERY_TREES = {1: "Offense", 2: "Defense", 3: "Support"}
+
+# BlessingTypeId codes from the game (2026-10-19 build). These are internal names; the in-game names come from the
+# localisation table, which the knowledge export doesn't read yet.
+BLESSING_CODES = {
+    1101: "Necromancy", 1102: "TimeSlowdown", 1201: "ToxicBlade", 1202: "Exterminator", 1301: "MagicOrb",
+    1302: "Fearless", 2101: "LightOrbs", 2102: "LeadershipDomination", 2201: "EnhancedWeapon", 2202: "Vanguard",
+    2301: "AdvancedHeal", 2302: "Courage", 3101: "Execute", 3102: "SoulDrinker", 3201: "ChainBreaker",
+    3202: "AdvancedLeadership", 3301: "Adaptation", 3302: "Amplification", 4101: "Meteor", 4102: "Polymorph",
+    4201: "MagicFlame", 4202: "Penetrator", 4301: "Agility", 4302: "Carapace", 5101: "WildGrowth",
+    5102: "Tranquility", 5201: "NatureBalance", 5202: "NatureReach", 5301: "WildImpulses", 5302: "CreepingRoots",
+}
+
 DAMAGE_KINDS = {"Damage"}
 PLACE_KINDS = {"ApplyBuff", "ApplyDebuff"}
 
@@ -185,6 +218,7 @@ class Knowledge:
             boss_ids = {max((e for e in enemies if e["wave"] == last_wave), key=lambda e: e["level"])["type_id"]}
         return {
             "place": self._region_label(region),
+            "area": region["area"],
             "difficulty": shown_difficulty,
             "stage": chosen["number"],
             "stage_id": chosen["id"],
@@ -195,10 +229,21 @@ class Knowledge:
                                            for e in enemies if e["wave"] == wave]}
                 for wave in sorted({e["wave"] for e in enemies})
             ],
+            "enemy_affinities": [
+                {"wave": wave, **self._affinity_counts([e for e in enemies if e["wave"] == wave])}
+                for wave in sorted({e["wave"] for e in enemies})
+            ],
             "stage_modifiers": [self._modifier_text(m) for m in chosen["modifiers"]],
             "boss_kits": [self.champion_kit_by_type(type_id) for type_id in sorted(boss_ids)],
             "exported_at": self.raw.get("exported_at"),
         }
+
+    def _affinity_counts(self, enemies: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for enemy in enemies:
+            affinity = (self.types.get(enemy["type_id"]) or {}).get("affinity") or "unknown"
+            counts[affinity] = counts.get(affinity, 0) + 1
+        return counts
 
     def champion_kit_by_type(self, type_id: int) -> dict[str, Any]:
         champion_type = self.types[type_id]
@@ -222,8 +267,11 @@ class Knowledge:
         if found.get("ambiguous") or "boss_kits" not in found:
             return found
         boss = found["boss_kits"][0] if found["boss_kits"] else None
-        boss_affinity = boss["affinity"] if boss else ""
-        matchup = affinity_matchup(boss_affinity) if boss else None
+        enemy_counts: dict[str, int] = {}
+        for wave in found["enemy_affinities"]:
+            for affinity, count in wave.items():
+                if affinity != "wave":
+                    enemy_counts[affinity] = enemy_counts.get(affinity, 0) + count
         roster = _owned_roster(home or instance_home())
 
         candidates = []
@@ -233,11 +281,9 @@ class Knowledge:
             if not champion_type or not champion_type.get("name") or best["stars"] < min_stars:
                 continue
             affinity = champion_type["affinity"]
-            hits = "normal"
-            if matchup and affinity in matchup["strong_hits_from"]:
-                hits = "strong"
-            elif matchup and affinity in matchup["weak_hits_from"]:
-                hits = "weak"
+            hits_on_enemies = {"strong": 0, "normal": 0, "weak": 0}
+            for defender, count in enemy_counts.items():
+                hits_on_enemies[_hit_kind(affinity, defender)] += count
             candidates.append({
                 "champion": champion_type["name"],
                 "id": best["id"],
@@ -245,29 +291,46 @@ class Knowledge:
                 "level": best["level"],
                 "awakening": best["awakening"],
                 "affinity": affinity,
-                "hits_on_boss": hits,
+                "hits_on_boss": _hit_kind(affinity, boss["affinity"]) if boss else None,
+                "hits_on_enemies": hits_on_enemies,
                 "role": champion_type["role"],
                 "stats": best["stats"],
+                "masteries": _mastery_view(best["masteries"]),
+                "blessing": BLESSING_CODES.get(best["blessing_id"], best["blessing_id"]) if best["blessing_id"] else None,
+                "leader_skill": [self._leader_view(aura, found["area"]) for aura in champion_type.get("leader_skills") or []] or None,
                 "kit": self._kit_summary(champion_type),
             })
 
         order = {"strong": 0, "normal": 1, "weak": 2}
-        candidates.sort(key=lambda c: (order[c["hits_on_boss"]], -(c["awakening"] or 0), -c["stars"], -c["level"], c["champion"]))
+        if boss:
+            def affinity_rank(c: dict[str, Any]) -> Any:
+                return order[c["hits_on_boss"]]
+        else:
+            def affinity_rank(c: dict[str, Any]) -> Any:
+                return c["hits_on_enemies"]["weak"] - c["hits_on_enemies"]["strong"]
+        candidates.sort(key=lambda c: (affinity_rank(c), -(c["awakening"] or 0), -c["stars"], -c["level"], c["champion"]))
         limit = max(1, min(int(limit), 200))
         return {
             "place": found["place"],
+            "area": found["area"],
             "difficulty": found["difficulty"],
             "stage": found["stage"],
             "team_size": found["champion_slots"],
             "waves": found["waves"],
+            "enemy_affinities": found["enemy_affinities"],
             "stage_modifiers": found["stage_modifiers"],
             "boss": boss,
             "candidates_total": len(candidates),
             "candidates": candidates[:limit],
             "note": (
-                "hits_on_boss comes from the affinity wheel against the boss. Stats are Trogly's calculated stats "
-                "(checked against the game's champion screens and battle stats). Kit summaries come from the game's skill data; read boss.skills "
-                "passives for immunities and counters before picking."
+                ("hits_on_boss comes from the affinity wheel against the boss. " if boss else
+                 "This stage has no boss: candidates are ranked by hits_on_enemies, how many of the stage's enemies "
+                 "(all waves) each one hits strong, normal, or weak. ")
+                + "Stats are Trogly's calculated stats (checked against the game's champion screens and battle stats), "
+                "masteries and blessing included. masteries.capstone is the tier-6 mastery. blessing is the game's "
+                "internal code; its in-game name and effect aren't known to Trogly yet. leader_skill.works_here says "
+                "whether the lead applies in this area. Kit summaries come from the game's skill data; read "
+                "boss.skills passives for immunities and counters before picking."
             ),
         }
 
@@ -360,6 +423,10 @@ class Knowledge:
             "aura": f"{stat} {amount}{' for ' + who + ' allies' if who else ''} in {aura.get('area') or 'all battles'}",
             "works_in_arena": tuning.aura_applies(aura, "Arena"),
         }
+
+    @staticmethod
+    def _leader_view(aura: dict[str, Any], area: str) -> dict[str, Any]:
+        return {"aura": Knowledge._aura_view(aura)["aura"], "works_here": tuning.aura_applies(aura, area)}
 
     def _turn_meter_skills(self, tune: Any, champion: dict[str, Any], champion_type: dict[str, Any]) -> list[str]:
         lines = []
@@ -552,6 +619,28 @@ def _scaling_of(formula: str) -> set[str]:
     return scaling
 
 
+def _hit_kind(attacker: str, defender: str) -> str:
+    matchup = affinity_matchup(defender)
+    if attacker in matchup["strong_hits_from"]:
+        return "strong"
+    return "weak" if attacker in matchup["weak_hits_from"] else "normal"
+
+
+def _mastery_view(mastery_ids: list[Any]) -> dict[str, Any] | None:
+    """Masteries by name, grouped by tree, with the tier-6 capstone called out."""
+    if not mastery_ids:
+        return None
+    by_tree: dict[str, list[str]] = {}
+    capstones = []
+    for raw in mastery_ids:
+        mastery_id = int(raw)
+        name = MASTERY_NAMES.get(mastery_id, str(mastery_id))
+        by_tree.setdefault(MASTERY_TREES.get(mastery_id // 100 % 10, "Other"), []).append(name)
+        if mastery_id // 10 % 10 == 6:
+            capstones.append(name)
+    return {"count": len(mastery_ids), "capstone": capstones[0] if capstones else None, "trees": by_tree}
+
+
 def _owned_roster(home: Path) -> dict[int, list[dict[str, Any]]]:
     """Owned champions by type, best copy first, with awakening and calculated stats."""
     path = home / STATE_RELATIVE_PATH
@@ -573,7 +662,8 @@ def _owned_roster(home: Path) -> dict[int, list[dict[str, Any]]]:
         roster.setdefault(champion.get("type_id"), []).append({
             "id": champion.get("id"), "stars": champion.get("stars", 0), "level": champion.get("level", 0),
             "awakening": champion.get("awakening_level", 0), "gear_pieces": len(champion.get("equipped_artifact_ids") or {}),
-            "stats": stats,
+            "stats": stats, "masteries": champion.get("masteries") or [],
+            "blessing_id": int(champion["blessing_id"]) if str(champion.get("blessing_id") or "").isdigit() else None,
         })
     for copies in roster.values():
         copies.sort(key=lambda c: (-c["stars"], -c["level"], -(c["awakening"] or 0), -c["gear_pieces"]))

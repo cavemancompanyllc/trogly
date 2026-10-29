@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "trogly-dungeons",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "RAID: Shadow Legends team building for dungeons and stages from your own champions: reads the boss's real kit and boosts, works out what the fight needs, and picks champions whose skills cover it. Needs trogly-core and trogly-knowledge; uses trogly-artifacts for gear follow-ups.",
   "author": {
     "name": "Mike",

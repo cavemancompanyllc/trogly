@@ -25,14 +25,14 @@
       "name": "trogly-knowledge",
       "source": "./plugins/trogly-knowledge",
       "description": "RAID facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs), auras, and every stage's enemies, boss kits, and boss stat boosts, plus a speed tune simulator that plays out a team's turn order the way the game does. Installs trogly-core too.",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "category": "gaming"
     },
     {
       "name": "trogly-dungeons",
       "source": "./plugins/trogly-dungeons",
       "description": "Dungeon team building from your own champions: reads the boss kit and boosts, works out what the fight needs, picks and explains a team. Installs trogly-core, trogly-knowledge, and trogly-artifacts too.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "category": "gaming"
     },
     {

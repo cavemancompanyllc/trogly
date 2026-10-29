@@ -22,9 +22,12 @@ KNOWLEDGE = {
     "exported_at": "2026-10-17T00:00:00+00:00",
     "owned_type_ids": [9176, 5000],
     "champion_types": [
-        {"type_id": 9176, "name": "Thor Faehammer", "rarity": "Legendary", "faction": "Barbarians", "affinity": "Magic", "role": "Attack", "skill_ids": [1, 2]},
+        {"type_id": 9176, "name": "Thor Faehammer", "rarity": "Legendary", "faction": "Barbarians", "affinity": "Magic", "role": "Attack", "skill_ids": [1, 2],
+         "leader_skills": [{"stat": "Speed", "absolute": False, "amount": 0.16, "area": "Dungeon", "affinity": None, "faction": None}]},
         {"type_id": 5000, "name": "Fayne", "rarity": "Legendary", "faction": "SylvanWatchers", "affinity": "Void", "role": "Attack", "skill_ids": [3]},
         {"type_id": 26666, "name": "Akumori the Phantom Shogun", "rarity": "Legendary", "faction": "Samurai", "affinity": "Force", "role": "Attack", "skill_ids": [4, 5]},
+        {"type_id": 1906, "name": "Ghostborn", "rarity": "Legendary", "faction": "UndeadHordes", "affinity": "Spirit", "role": "Attack", "skill_ids": []},
+        {"type_id": 4636, "name": "Tormin the Cold", "rarity": "Legendary", "faction": "Dwarves", "affinity": "Void", "role": "Attack", "skill_ids": []},
     ],
     "skills": {
         "1": {"name": "Wrath of Mjolnir", "description": "Attacks 1 enemy 2 times.", "cooldown": 0,
@@ -42,6 +45,13 @@ KNOWLEDGE = {
          "difficulties": {"None": [stage(n, 100 + n * 10) for n in range(1, 26)]}},
         {"id": 219, "code": "ChampionJourneyDungeon", "name": "ChampionJourneyDungeon", "area": "Dungeon",
          "difficulties": {"None": [stage(3, 200, is_boss=True)]}},
+        {"id": 702, "code": "DoomTower2", "name": "DoomTower2", "area": "DoomTower",
+         "difficulties": {"Hard": [{
+             "id": 7022057, "number": 57, "champion_slots": 5, "has_boss": False, "modifiers": [],
+             "enemies": [{"wave": 1, "type_id": 1906, "name": "Ghostborn", "stars": 6, "level": 270, "is_boss": False},
+                         {"wave": 1, "type_id": 1906, "name": "Ghostborn", "stars": 6, "level": 270, "is_boss": False},
+                         {"wave": 2, "type_id": 4636, "name": "Tormin the Cold", "stars": 6, "level": 275, "is_boss": False}],
+         }]}},
     ],
 }
 
@@ -51,7 +61,9 @@ def knowledge(tmp_path):
     (tmp_path / "data" / "knowledge").mkdir(parents=True)
     (tmp_path / "data" / "knowledge" / "knowledge.json").write_text(json.dumps(KNOWLEDGE), encoding="utf-8")
     (tmp_path / "data" / "state").mkdir(parents=True)
-    state = {"champions": [{"id": "16109", "type_id": 9176, "stars": 6, "level": 60}, {"id": "5396", "type_id": 5000, "stars": 6, "level": 60}]}
+    state = {"champions": [{"id": "16109", "type_id": 9176, "stars": 6, "level": 60, "blessing_id": "5201",
+                            "masteries": ["500113", "500212", "500161", "500343"]},
+                           {"id": "5396", "type_id": 5000, "stars": 6, "level": 60}]}
     (tmp_path / "data" / "state" / "trogly-state.json").write_text(json.dumps(state), encoding="utf-8")
     return tmp_path, Knowledge.load(tmp_path)
 
@@ -144,6 +156,31 @@ def test_team_candidates_rank_by_affinity_against_the_boss_and_summarise_kits(kn
     thor = result["candidates"][1]["kit"]
     assert thor["damage_scales_with"] == ["ATK"]
     assert thor["debuffs_enemies"] == ["Decrease Speed 30%"]
+
+
+def test_team_candidates_on_a_stage_without_a_boss_rank_by_hits_on_the_wave_enemies(knowledge):
+    home, k = knowledge
+    result = k.team_candidates("DoomTower2", 57, "Hard", home=home)
+    assert result["boss"] is None and result["area"] == "DoomTower"
+    assert result["enemy_affinities"] == [{"wave": 1, "Spirit": 2}, {"wave": 2, "Void": 1}]
+    # Thor is Magic: strong on both Spirit enemies. Fayne is Void: normal on everything.
+    assert [(c["champion"], c["hits_on_boss"], c["hits_on_enemies"]) for c in result["candidates"]] == [
+        ("Thor Faehammer", None, {"strong": 2, "normal": 1, "weak": 0}),
+        ("Fayne", None, {"strong": 0, "normal": 3, "weak": 0}),
+    ]
+
+
+def test_team_candidates_show_masteries_blessing_and_where_the_lead_works(knowledge):
+    home, k = knowledge
+    thor, fayne = k.team_candidates("DoomTower2", 57, "Hard", home=home)["candidates"]
+    assert thor["masteries"] == {"count": 4, "capstone": "Warmaster",
+                                 "trees": {"Offense": ["Deadly Precision", "Warmaster"], "Defense": ["Tough Skin"],
+                                           "Support": ["Lore of Steel"]}}
+    assert thor["blessing"] == "NatureBalance"
+    assert thor["leader_skill"] == [{"aura": "SPD +16% in Dungeon", "works_here": False}]
+    assert fayne["masteries"] is None and fayne["blessing"] is None and fayne["leader_skill"] is None
+    in_dungeon = k.team_candidates("Phantom Shogun", 20, home=home)["candidates"]
+    assert next(c for c in in_dungeon if c["champion"] == "Thor Faehammer")["leader_skill"][0]["works_here"] is True
 
 
 def test_team_candidates_respect_min_stars(knowledge):

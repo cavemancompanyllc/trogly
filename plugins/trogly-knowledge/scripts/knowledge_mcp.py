@@ -60,10 +60,12 @@ def find_stage(location: str, stage: int | None = None, difficulty: str = "") ->
 @mcp.tool()
 def team_candidates(location: str, stage: int, difficulty: str = "", min_stars: int = 6, limit: int = 40) -> dict[str, Any]:
     """Everything needed to pick a team for one stage: team size, waves, the boss's full kit and affinity matchup,
-    stage modifiers, and the player's owned champions (best copy of each, min_stars and up) ranked by how they hit
-    the boss (strong, normal, weak), awakening, and stars. Each candidate has calculated stats and a kit summary:
-    skills with cooldowns, buffs it places on allies, debuffs on enemies, other abilities (heal, revive, cleanse, turn
-    meter, ...), and what its damage scales with."""
+    stage modifiers, enemy affinities per wave, and the player's owned champions (best copy of each, min_stars and up)
+    ranked by how they hit the boss (strong, normal, weak), or on a stage without a boss by how many of the wave
+    enemies they hit strong or weak (hits_on_enemies), then awakening and stars. Each candidate has calculated stats,
+    masteries by name (capstone = tier 6), blessing (game code), leader skill with works_here for this stage's area,
+    and a kit summary: skills with cooldowns, buffs it places on allies, debuffs on enemies, other abilities (heal,
+    revive, cleanse, turn meter, ...), and what its damage scales with."""
     return _answer(lambda: Knowledge.load().team_candidates(location, stage, difficulty, min_stars, limit))
 
 
