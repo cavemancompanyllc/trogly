@@ -89,3 +89,18 @@ def test_upgrade_candidates_for_wanted_stats(home):
 def test_upgrade_candidates_reject_unknown_stats(home):
     with pytest.raises(TroglyError, match="not a substat"):
         inventory_tools.upgrade_candidates(stats=["Luck"], home=home)
+
+
+def test_crit_substats_count_for_builds_that_do_not_ask_for_them():
+    plain = piece("plain", "Chest", bonus("Accuracy", 40), [bonus("Resistance", 10), bonus("Attack", 0.05, False)])
+    crit = piece("crit", "Chest", bonus("Accuracy", 40), [bonus("CriticalChance", 0.05, False), bonus("Attack", 0.05, False)])
+    plain_score = inventory_tools._scored(plain)["profiles"]["debuff"]
+    crit_score = inventory_tools._scored(crit)["profiles"]["debuff"]
+    assert crit_score - plain_score == pytest.approx(inventory_tools.CRIT_WEIGHT * inventory_tools._set_factor(inventory_tools.NO_SET_WEIGHT))
+
+
+@pytest.mark.parametrize("slot", ["Gloves", "Chest", "Boots"])
+@pytest.mark.parametrize("stat", ["Attack", "Defence", "Health"])
+def test_flat_main_on_gloves_chest_boots_suits_no_build(slot, stat):
+    flat = piece("flat", slot, bonus(stat, 80), [bonus("Speed", 15, rolls=3), bonus("CriticalChance", 0.15, False, rolls=1)])
+    assert inventory_tools._scored(flat)["best_profile"] is None

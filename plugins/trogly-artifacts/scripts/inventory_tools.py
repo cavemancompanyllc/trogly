@@ -34,6 +34,11 @@ ROLL_UNIT = {
     "ACC": 10, "RES": 10, "ATK": 20, "HP": 300, "DEF": 20,
 }
 FLAT_WEIGHT = 0.25
+# Crit is almost never wasted: crit rate from substats frees the gloves for C.DMG, and many debuffers and supports
+# still hit or heal. Where a build doesn't want crit, crit substats count for this much of a roll (score only; the
+# upgrade odds count the build's own stats).
+CRIT_STATS = ("C.RATE", "C.DMG")
+CRIT_WEIGHT = 0.5
 # Future rolls are counted as one roll unit on a 6-star piece; lower ranks roll smaller.
 RANK_ROLL_FACTOR = {6: 1.0, 5: 0.8, 4: 0.6, 3: 0.45, 2: 0.3, 1: 0.2}
 # Score = stat score x (SET_FLOOR + (1 - SET_FLOOR) x set weight): stats still matter most, the set breaks ties.
@@ -286,6 +291,8 @@ def _units(subs: list[tuple[str, float, int]], stats: tuple[str, ...]) -> float:
             total += value / ROLL_UNIT[key]
         elif key in flats:
             total += FLAT_WEIGHT * value / ROLL_UNIT[key]
+        elif key in CRIT_STATS:
+            total += CRIT_WEIGHT * value / ROLL_UNIT[key]
     return total
 
 
@@ -351,7 +358,9 @@ def _sell_row(artifact: dict[str, Any], vault: list[dict[str, Any]]) -> dict[str
     else:
         best = artifact["best_profile"]
         useful = [key for key, _, _ in artifact["subs"] if key in PROFILES[best]["stats"]]
-        reasons.append(f"best fit {best} build: {len(useful)} useful substat(s) ({', '.join(useful) or 'none'}), "
+        crit = [key for key, _, _ in artifact["subs"] if key in CRIT_STATS and key not in useful]
+        reasons.append(f"best fit {best} build: {len(useful)} useful substat(s) ({', '.join(useful) or 'none'})"
+                       f"{', plus ' + ' and '.join(crit) + ' at half value' if crit else ''}, "
                        f"score {artifact['best_score']:.1f}")
         if artifact["level"] < 16:
             reasons.append(f"{artifact['good_chance'][best]:.0%} chance of 5+ useful hits if upgraded")
