@@ -32,7 +32,7 @@
       "name": "trogly-dungeons",
       "source": "./plugins/trogly-dungeons",
       "description": "Dungeon team building from your own champions: reads the boss kit and boosts, works out what the fight needs, picks and explains a team. Installs trogly-core, trogly-knowledge, and trogly-artifacts too.",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "category": "gaming"
     },
     {
