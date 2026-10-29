@@ -25,7 +25,7 @@
       "name": "trogly-knowledge",
       "source": "./plugins/trogly-knowledge",
       "description": "RAID facts from the game's own data: every champion's skills (cooldowns, buffs and debuffs), auras, and every stage's enemies, boss kits, and boss stat boosts, plus a speed tune simulator that plays out a team's turn order the way the game does. Installs trogly-core too.",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "category": "gaming"
     },
     {

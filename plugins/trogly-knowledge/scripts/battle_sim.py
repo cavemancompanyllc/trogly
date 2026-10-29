@@ -77,6 +77,20 @@ IMMUNITY_WORDS = {
 SUPPORTED_KINDS = {"Damage", "ApplyBuff", "ApplyDebuff", "Heal", "Revive", "IncreaseStamina", "ReduceStamina", "ExtraTurn",
                    "RemoveDebuff", "RemoveBuff", "ReduceCooldown", "IncreaseCooldown", "ChangeDamageMultiplier",
                    "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization"}
+# Passive effects that do something when set off (the rest change damage or block effects, handled where those happen).
+TRIGGERED_KINDS = SUPPORTED_KINDS - {"ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects",
+                                     "ActionForVisualization"}
+# Battle phases (BattlePhaseId) a passive's relation names, grouped by the moment the simulator sets them off.
+HIT_PHASES = {"AfterDamageCalculated", "AfterFinalDamageCalculated", "BeforeDamageDealt", "AfterDamageDealt",
+              "AfterHealthReduced", "HealthReduced", "AfterEffectProcessedOnTarget", "AfterEffectProcessed"}
+SKILL_PHASES = {"AfterSkillUsed", "AfterAllSkillsUsed", "AfterSkillEffectsProcessed"}
+TURN_START_PHASES = {"BeforeTurnStarted", "AfterTurnStarted"}
+TURN_END_PHASES = {"TurnFinished", "BeforeTurnFinished"}
+BATTLE_START_PHASES = {"BattleStarted", "RoundStarted", "AfterRoundStarted"}
+DEATH_PHASES = {"HeroDead", "AllHeroesDeathProcessed"}
+HANDLED_PHASES = HIT_PHASES | SKILL_PHASES | TURN_START_PHASES | TURN_END_PHASES | BATTLE_START_PHASES | DEATH_PHASES
+# A mastery's id is its skill's id (BattleHero.ResolveSkills builds BattleSkill(hero, masteryId, SkillSource.Mastery)).
+MASTERY_IDS = range(500000, 501000)
 DEAD_TARGETS = {"AllDeadAllies", "RandomDeadAlly", "RandomRevivableAlly"}
 AOE_TARGETS = {"AllEnemies", "AllHeroes"}
 DAMAGE_TAKEN_KINDS = {"IncreaseDamageTaken", "ReduceDamageTaken"}
@@ -209,6 +223,7 @@ class Battle:
         self.tallies: dict[str, Tally] = {}
         self.hits: dict[str, int] = {}
         self.deaths: list[dict[str, Any]] = []
+        self.turn_owner: Fighter | None = None
 
     # Turn loop (speed tune rules)
 
@@ -237,6 +252,9 @@ class Battle:
 
     def run(self, boss_turn_limit: int) -> dict[str, Any]:
         boss = next(f for f in self.fighters if f.is_boss)
+        start_notes: list[str] = []
+        for fighter in self.fighters:
+            self.fire(fighter, BATTLE_START_PHASES, start_notes)
         while True:
             team_alive = [f for f in self.fighters if f.side == "team" and f.alive]
             if not team_alive or not boss.alive or boss.turns_taken >= boss_turn_limit:
@@ -262,6 +280,10 @@ class Battle:
                 actor.cooldowns[label] = max(actor.cooldowns[label] - 1, 0)
         entry: dict[str, Any] = {"tick": self.ticks, "who": actor.name, "turn": actor.turns_taken} if self.record else {}
         notes: list[str] = []
+        self.turn_owner = actor
+        for fighter in self.fighters:
+            if fighter.alive:
+                self.fire(fighter, TURN_START_PHASES, notes)
         self.tick_statuses(actor, notes)
         if not actor.alive:
             self.log(entry, "-", notes)
@@ -276,6 +298,9 @@ class Battle:
             self.use_skill(actor, skill, notes)
             if skill.cooldown:
                 actor.cooldowns[skill.label] = skill.cooldown
+        for fighter in self.fighters:
+            if fighter.alive:
+                self.fire(fighter, TURN_END_PHASES, notes)
         self.end_turn(actor)
         self.log(entry, f"{skill.label} {skill.name}" if skill else "-", notes)
 
@@ -366,6 +391,41 @@ class Battle:
             if effect.get("passive"):
                 continue
             self.apply_effect(effect, context, allies, enemies, notes)
+        if actor.alive:
+            self.fire(actor, SKILL_PHASES, notes, kinds=skill.kinds(), other=chosen, trigger=context)
+
+    # Passives
+
+    def fire(self, owner: Fighter, phases: set[str], notes: list[str], kinds: set[str] | None = None,
+             other: Fighter | None = None, related_effect: dict[str, Any] | None = None, as_target: bool = False,
+             hit: str | None = None, trigger: "SkillContext | None" = None) -> None:
+        """Sets off the owner's passive effects whose relation names one of `phases` (and, when it lists effect kinds,
+        one of `kinds`): masteries, champion passives, and boss passives alike. Effects a passive causes don't set off
+        further passives, and a unique effect happens once per triggering skill."""
+        if not owner.alive and not phases & DEATH_PHASES:
+            return
+        if trigger is not None and trigger.passive:
+            return
+        for passive in owner.passives:
+            if passive["kind"] not in TRIGGERED_KINDS:
+                continue
+            relation = passive.get("relation") or {}
+            if not set(relation.get("phases") or []) & phases:
+                continue
+            wanted = set(relation.get("kinds") or [])
+            if wanted and not wanted & (kinds or set()):
+                continue
+            key = (owner.name, passive.get("id"))
+            if passive.get("unique") and trigger is not None:
+                if key in trigger.fired:
+                    continue
+                trigger.fired.add(key)
+            skill = Skill("P", passive.get("skill_name") or "passive", 0, 0, 0, None, [passive])
+            context = SkillContext(actor=owner, skill=skill, chosen=other, last_hit=hit, passive=True,
+                                   owner_produces=not as_target, related_effect=related_effect)
+            allies = [f for f in self.fighters if f.side == owner.side]
+            enemies = [f for f in self.fighters if f.side != owner.side]
+            self.apply_effect(passive, context, allies, enemies, notes)
 
     def pick_target(self, actor: Fighter, skill: Skill, allies: list[Fighter], enemies: list[Fighter]) -> Fighter | None:
         alive_enemies = [e for e in enemies if e.alive]
@@ -551,10 +611,13 @@ class Battle:
             dealt = self.receive(target, actor, amount)
             if actor.lifesteal and dealt > 0:
                 self.heal(actor, dealt * actor.lifesteal)
-            if hit == rules.CRITICAL:
-                notes.append(f"crit {target.name} {round(dealt)}")
-            else:
-                notes.append(f"hits {target.name} {round(dealt)}")
+            label = context.skill.name if context.passive else ("crit" if hit == rules.CRITICAL else "hits")
+            notes.append(f"{label} {target.name} {round(dealt)}")
+            if not context.passive:
+                self.fire(actor, HIT_PHASES, notes, kinds={effect["kind"]}, other=target, related_effect=effect, hit=hit,
+                          trigger=context)
+                self.fire(target, HIT_PHASES, notes, kinds={effect["kind"]}, other=actor, related_effect=effect,
+                          as_target=True, hit=hit, trigger=context)
 
     def status_multiplier(self, actor: Fighter, target: Fighter, effect: dict[str, Any], context: "SkillContext") -> float:
         """StatusChangeDamageMultiplierProcessor (0x182DDA400): every status on the target or the attacker whose own
@@ -680,6 +743,8 @@ class Battle:
         target.statuses = []
         target.stamina = 0
         self.deaths.append({"champion": target.name, "boss_turn": self.boss_turns(), "by": dealer.name if dealer else None})
+        for fighter in self.fighters:
+            self.fire(fighter, DEATH_PHASES, [], kinds={"Damage"}, other=target, as_target=fighter is target)
 
     def boss_turns(self) -> int:
         return next((f.turns_taken for f in self.fighters if f.is_boss), 0)
@@ -779,6 +844,10 @@ class SkillContext:
     chosen: Fighter | None
     relation_targets: list[Fighter] = field(default_factory=list)
     last_hit: str | None = None
+    passive: bool = False  # a passive's effect: it doesn't set off further passives
+    owner_produces: bool = True  # the passive's owner caused what set it off (False: it was on the receiving end)
+    related_effect: dict[str, Any] | None = None
+    fired: set[tuple[str, Any]] = field(default_factory=set)  # unique passive effects already set off by this skill
 
 
 class Resolver:
@@ -797,6 +866,9 @@ class Resolver:
         self.scales_by_hp = scales_by_hp
         self.related_producer = related_producer
         self.owner_produces = owner_produces
+        if context is not None:
+            self.related_effect = related_effect if related_effect is not None else context.related_effect
+            self.owner_produces = owner_produces and context.owner_produces
 
     def value(self, name: str) -> float:
         owner, target = self.owner, self.target
@@ -823,7 +895,9 @@ class Resolver:
             "OWNERS_TURN_NUMBER": lambda: owner.turns_taken,
             "DMG_MUL": lambda: self.damage if self.damage is not None else 0.0,
             "isCritical": lambda: float(self.context is not None and self.context.last_hit == rules.CRITICAL),
-            "isOwnersTurn": lambda: 1.0,
+            "isOwnersTurn": lambda: float(self.battle.turn_owner is None or self.battle.turn_owner is owner),
+            "isAllyTurn": lambda: float(self.battle.turn_owner is not None and self.battle.turn_owner is not owner
+                                        and self.battle.turn_owner.side == owner.side),
             "relatedEffectWasDetonated": lambda: 0.0,
             "relatedEffectWasRedirected": lambda: 0.0,
             "reletionEffectScalesByTargetHp": lambda: float(self.scales_by_hp),
@@ -974,7 +1048,8 @@ class Simulator:
                 total.setdefault(key, 0.0)
             skills = self.skills_for(champion_type, champion.get("skill_levels") or {}, champion["name"])
             fighter = Fighter(champion["name"], "team", slot, champion["type_id"], champion_type.get("affinity"),
-                              rarity_number(champion_type.get("rarity")), base, total, skills, self.passives_for(champion_type))
+                              rarity_number(champion_type.get("rarity")), base, total, skills,
+                              self.passives_for(champion_type) + self.mastery_passives(champion))
             fighter.priority = self.labels(fighter, entry.get("priority"))
             fighter.never = set(self.labels(fighter, entry.get("never"), add_a1=False))
             fighter.delays = {label: int(turns) for label, turns in (entry.get("delay") or {}).items()}
@@ -1043,15 +1118,33 @@ class Simulator:
                     passives.append({**effect, "skill_name": skill.get("name")})
         return passives
 
+    def mastery_passives(self, champion: dict[str, Any]) -> list[dict[str, Any]]:
+        """The champion's masteries that do something in battle: each is a skill with the mastery's id."""
+        passives = []
+        for mastery in champion.get("masteries") or []:
+            skill = self.knowledge.skills.get(str(mastery))
+            for effect in (skill or {}).get("effects") or []:
+                passives.append({**effect, "skill_name": (skill or {}).get("name") or f"Mastery {mastery}", "mastery": str(mastery)})
+        return passives
+
     def flag_unmodelled(self, fighter: Fighter, champion: dict[str, Any], champion_type: dict[str, Any]) -> None:
         for passive in fighter.passives:
-            if passive["kind"] not in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect"):
-                self.miss(fighter, f"passive {passive.get('skill_name')}: {passive['kind']}")
+            kind = passive["kind"]
+            if kind in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect"):
+                continue
+            if passive.get("mastery") and kind == "PassiveChangeStats":
+                continue  # stat masteries are already in the calculated stats
+            phases = set((passive.get("relation") or {}).get("phases") or [])
+            if kind in TRIGGERED_KINDS and phases & HANDLED_PHASES:
+                continue
+            why = "no trigger in this knowledge file" if kind in TRIGGERED_KINDS and not phases else kind
+            self.miss(fighter, f"passive {passive.get('skill_name')}: {why}")
         for item in (champion.get("calculated_stats") or {}).get("sets") or []:
             if item.get("active") and item.get("skill_effect") and item.get("name") != "Lifesteal":
                 self.miss(fighter, f"{item.get('name')} set effect")
-        if champion.get("masteries"):
-            self.miss(fighter, "masteries with battle effects (Warmaster, Giant Slayer, Helmsmasher, ...)")
+        masteries = [str(m) for m in champion.get("masteries") or []]
+        if masteries and not any(m in self.knowledge.skills for m in masteries):
+            self.miss(fighter, "masteries (this knowledge file predates their export; run refresh_knowledge)")
 
     # Runs
 
@@ -1188,8 +1281,9 @@ def assumptions(sim: Simulator) -> list[str]:
         "multiply the hit's base value (game code). Freeze, Invisible against AoE, Stone Skin, and Petrification reduce "
         "damage as the game's DamageReductionByStatusEffects does.",
         "Poison is 5% or 2.5% of max HP and HP Burn 3% at the start of the holder's turn, before the boss's damage caps.",
-        "Masteries, blessings, and set effects other than Lifesteal aren't simulated, so damage is a floor for teams that "
-        "rely on Warmaster or Giant Slayer.",
+        "Passives, masteries included, fire on the battle phases the game's data gives them (after a hit, after a skill, "
+        "at turn start or end, on a death); effects they cause don't set off further passives. Blessings and set "
+        "effects other than Lifesteal aren't simulated.",
     ]
     if sim.fallback_statuses:
         notes.append("This knowledge file predates the export of status effect types, so "

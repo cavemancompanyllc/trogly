@@ -317,3 +317,53 @@ def test_freeze_invisible_and_stone_skin_reduce_damage_as_the_game_does():
     assert rules.status_reduction({"SimpleStoneSkin"}, False, "AoEContinuousDamage", factors)[0] == pytest.approx(0.2)
     assert rules.status_reduction({"Freeze", "SimpleStoneSkin"}, False, "Damage", factors)[0] == pytest.approx(0.375)
     assert rules.status_reduction({"Petrification"}, False, "Damage", {}) == (1.0, ["Petrification"])
+
+
+# Passives and masteries
+
+
+WARMASTER = skill("Warmaster", targets=None, effects=[{
+    **effect("Damage", "RelationTarget", "0.1*TRG_HP", chance=1.0, condition="isOwnerProduceRelatedEffect"),
+    "id": 5001632, "passive": True, "unique": True,
+    "relation": {"effect_id": None, "kinds": ["Damage"], "phases": ["AfterDamageDealt"]},
+}])
+MAX_HP_CAP = effect("ChangeDamageMultiplier", "Owner", "-(DMG_MUL-75000)",
+                    condition="reletionEffectScalesByTargetHp&&DMG_MUL>=75000&&relatedEffectId==5001632")
+
+
+def with_warmaster(knowledge):
+    knowledge.raw["skills"]["500163"] = WARMASTER
+    knowledge.raw["skills"]["907"] = skill("Infernal Resilience [P]", targets=None, effects=[MAX_HP_CAP])
+    boss_type = next(t for t in knowledge.raw["champion_types"] if t["type_id"] == 9000)
+    boss_type["skill_ids"] = boss_type["skill_ids"] + [907]
+    knowledge.types[9000] = boss_type
+    state = json.loads(json.dumps(STATE))
+    state["champions"][0]["masteries"] = ["500163", "500111"]
+    return state
+
+
+def test_a_mastery_hits_once_per_skill_and_the_boss_caps_it(knowledge):
+    state = with_warmaster(knowledge)
+    team = [{"champion": "Poisoner", "priority": ["A1"], "never": ["A2", "A3"]}]
+    result = battle_sim.simulate_clan_boss(knowledge, state, team, "Nightmare", "Void", runs=1, boss_turn_limit=6)
+    turns = [entry for entry in result["timeline"] if entry["who"] == "Poisoner" and entry["skill"] == "A1 Jab"]
+    assert turns
+    for entry in turns:
+        assert [event for event in entry["events"] if event.startswith("Warmaster")] == ["Warmaster Demon Lord 75000"]
+    assert not any("Warmaster" in item for item in result["not_simulated"].get("Poisoner", []))
+
+
+def test_masteries_in_an_older_knowledge_file_are_reported(knowledge):
+    state = json.loads(json.dumps(STATE))
+    state["champions"][0]["masteries"] = ["500163"]
+    result = battle_sim.simulate_clan_boss(knowledge, state, [{"champion": "Poisoner"}], "Nightmare", "Void", runs=1, boss_turn_limit=2)
+    assert any("predates" in item for item in result["not_simulated"]["Poisoner"])
+
+
+def test_turn_variables_know_whose_turn_it_is(knowledge):
+    _, battle, hero, boss, context = one_battle(knowledge)
+    battle.turn_owner = boss
+    assert battle_sim.Resolver(battle, hero, None, context).value("isOwnersTurn") == 0
+    assert battle_sim.Resolver(battle, hero, None, context).value("isAllyTurn") == 0
+    battle.turn_owner = hero
+    assert battle_sim.Resolver(battle, hero, None, context).value("isOwnersTurn") == 1
