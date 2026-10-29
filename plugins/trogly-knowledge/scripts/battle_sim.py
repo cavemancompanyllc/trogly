@@ -1049,7 +1049,8 @@ class Simulator:
             skills = self.skills_for(champion_type, champion.get("skill_levels") or {}, champion["name"])
             fighter = Fighter(champion["name"], "team", slot, champion["type_id"], champion_type.get("affinity"),
                               rarity_number(champion_type.get("rarity")), base, total, skills,
-                              self.passives_for(champion_type) + self.mastery_passives(champion) + self.set_passives(champion))
+                              self.passives_for(champion_type) + self.mastery_passives(champion) + self.set_passives(champion)
+                              + self.blessing_passives(champion))
             fighter.priority = self.labels(fighter, entry.get("priority"))
             fighter.never = set(self.labels(fighter, entry.get("never"), add_a1=False))
             fighter.delays = {label: int(turns) for label, turns in (entry.get("delay") or {}).items()}
@@ -1145,13 +1146,24 @@ class Simulator:
                     passives.append({**effect, "skill_name": f"{item.get('name')} set", "set": item.get("set")})
         return passives
 
+    def blessing_passives(self, champion: dict[str, Any]) -> list[dict[str, Any]]:
+        """The blessing's skill for the highest awakening grade the champion has reached that grants one (assumed: the
+        game builds the blessing skill server-side, so the grade rule isn't read from code)."""
+        grades = (self.knowledge.raw.get("blessing_skills") or {}).get(str(champion.get("blessing_id") or ""))
+        reached = [g for g in grades or [] if g["grade"] <= int(champion.get("awakening_level") or 0)]
+        if not reached:
+            return []
+        skill = self.knowledge.skills.get(str(reached[-1]["skill_id"])) or {}
+        name = skill.get("name") or f"Blessing {champion.get('blessing_id')}"
+        return [{**effect, "skill_name": name, "blessing": True} for effect in skill.get("effects") or []]
+
     def flag_unmodelled(self, fighter: Fighter, champion: dict[str, Any], champion_type: dict[str, Any]) -> None:
         for passive in fighter.passives:
             kind = passive["kind"]
             if kind in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect"):
                 continue
-            if passive.get("mastery") and kind == "PassiveChangeStats":
-                continue  # stat masteries are already in the calculated stats
+            if (passive.get("mastery") or passive.get("blessing")) and kind == "PassiveChangeStats":
+                continue  # their stat bonuses are already in the calculated stats
             phases = set((passive.get("relation") or {}).get("phases") or [])
             if kind in TRIGGERED_KINDS and phases & HANDLED_PHASES:
                 continue
@@ -1165,6 +1177,8 @@ class Simulator:
                 self.miss(fighter, f"{item.get('name')} set effect (this knowledge file predates set skills; run refresh_knowledge)")
             elif set_skills and not set_skills.get(item.get("set") or ""):
                 self.miss(fighter, f"{item.get('name')} set effect")
+        if champion.get("blessing_id") and not self.knowledge.raw.get("blessing_skills"):
+            self.miss(fighter, "blessing (this knowledge file predates blessing skills; run refresh_knowledge)")
         masteries = [str(m) for m in champion.get("masteries") or []]
         if masteries and not any(m in self.knowledge.skills for m in masteries):
             self.miss(fighter, "masteries (this knowledge file predates their export; run refresh_knowledge)")
@@ -1306,7 +1320,8 @@ def assumptions(sim: Simulator) -> list[str]:
         "Poison is 5% or 2.5% of max HP and HP Burn 3% at the start of the holder's turn, before the boss's damage caps.",
         "Passives, masteries included, fire on the battle phases the game's data gives them (after a hit, after a skill, "
         "at turn start or end, on a death); effects they cause don't set off further passives. Artifact set skills run "
-        "the same way when the knowledge file has them. Blessings aren't simulated.",
+        "the same way when the knowledge file has them, and so do blessing skills (the skill for the highest awakening "
+        "grade reached; assumed).",
     ]
     if sim.fallback_statuses:
         notes.append("This knowledge file predates the export of status effect types, so "

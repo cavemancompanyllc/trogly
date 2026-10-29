@@ -382,3 +382,14 @@ def test_an_active_set_grants_its_skill(knowledge):
     result = battle_sim.simulate_clan_boss(knowledge, state, [{"champion": "Tank"}], "Nightmare", "Void", runs=1, boss_turn_limit=4)
     assert result["debuffs"]["ContinuousDamage025p"]["landed"] > 0
     assert "Tank" not in result["not_simulated"]
+
+
+def test_a_blessing_grants_the_skill_for_the_highest_grade_reached(knowledge):
+    knowledge.raw["blessing_skills"] = {"1301": [{"grade": 1, "skill_id": 700101}, {"grade": 4, "skill_id": 700104}]}
+    for skill_id, name in (("700101", "Blessed I"), ("700104", "Blessed IV")):
+        knowledge.raw["skills"][skill_id] = skill(name, targets=None, effects=[{**effect("Heal", "Owner", "1"), "passive": True}])
+    sim = battle_sim.Simulator(knowledge, STATE)
+    champion = {"blessing_id": "1301", "awakening_level": 3}
+    assert {p["skill_name"] for p in sim.blessing_passives(champion)} == {"Blessed I"}
+    assert {p["skill_name"] for p in sim.blessing_passives({**champion, "awakening_level": 6})} == {"Blessed IV"}
+    assert sim.blessing_passives({**champion, "awakening_level": 0}) == []
