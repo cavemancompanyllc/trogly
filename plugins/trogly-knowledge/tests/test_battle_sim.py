@@ -423,3 +423,33 @@ def test_a_blessing_grants_the_skill_for_the_highest_grade_reached(knowledge):
     assert {p["skill_name"] for p in sim.blessing_passives(champion)} == {"Blessed I"}
     assert {p["skill_name"] for p in sim.blessing_passives({**champion, "awakening_level": 6})} == {"Blessed IV"}
     assert sim.blessing_passives({**champion, "awakening_level": 0}) == []
+
+
+def test_immunities_come_only_from_the_immune_to_sentences(knowledge):
+    knowledge.raw["skills"]["904"]["description"] = (
+        "Decreases the damage the Demon Lord receives from [Poison] debuffs.\n\nImmune to [Stun] and [Freeze] debuffs.")
+    immune = battle_sim.Simulator(knowledge, STATE).immunities(knowledge.types[9000])
+    assert {"Stun", "Freeze"} <= immune
+    assert "ContinuousDamage" not in immune
+
+
+def test_a_passive_tied_to_one_effect_fires_only_after_that_effect(knowledge):
+    knowledge.raw["skills"]["11"]["effects"][0]["id"] = 111
+    knowledge.raw["skills"]["13"] = skill("Rally [P]", targets=None, effects=[{
+        **effect("ApplyBuff", "Owner", statuses=[("IncreaseAttack25", 1)]), "passive": True,
+        "relation": {"effect_id": 999, "kinds": [], "phases": ["AfterDamageDealt"]}}])
+    _, battle, hero, boss, context = one_battle(knowledge)
+    battle.apply_effect(hero.skills[0].effects[0], context, [hero], [boss], [])
+    assert not hero.has("IncreaseAttack")
+    hero.passives[0]["relation"]["effect_id"] = 111
+    battle.apply_effect(hero.skills[0].effects[0], context, [hero], [boss], [])
+    assert hero.has("IncreaseAttack")
+
+
+def test_a_damage_passive_changes_only_the_damage_kinds_it_names(knowledge):
+    knowledge.raw["skills"]["904"]["effects"] = [{
+        **effect("ChangeDamageMultiplier", "Owner", "-0.9*DMG_MUL", condition="ownerIsRelatedEffectTarget"),
+        "passive": True, "relation": {"effect_id": None, "kinds": ["ContinuousDamage"], "phases": ["BeforeDamageCalculated"]}}]
+    _, battle, hero, boss, _ = one_battle(knowledge)
+    assert battle.passive_damage(hero, boss, 1000, HIT, False, kind="Damage") == pytest.approx(1000)
+    assert battle.passive_damage(hero, boss, 1000, None, False, kind="ContinuousDamage") == pytest.approx(100)

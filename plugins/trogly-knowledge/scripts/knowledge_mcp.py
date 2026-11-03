@@ -131,6 +131,26 @@ def clan_boss_teams(
 
 
 @mcp.tool()
+def hydra_teams(
+    teams: list[Any],
+    difficulty: str = "Normal",
+    season: int | None = None,
+    focus: list[str] | None = None,
+    runs: int = 10,
+) -> dict[str, Any]:
+    """Simulates alliance Hydra battles in code from the game's own rules and head kits, and ranks the teams by damage.
+
+    teams: list of teams; each is a list of up to 6 champion names (leader first) or {"label", "champions": [...]}, and a
+    champion can be {"champion", "priority", "never", "delay"} as in clan_boss_teams. difficulty: Normal, Hard, Brutal,
+    Nightmare. season: the Hydra rotation 1-6 (its four heads differ); omitted, the last one. focus: head names in the
+    order the team should attack them (e.g. ["Head of Decay", "Head of Wrath"]). runs: battles per team. This first
+    version keeps decapitated heads down and doesn't model regrowth, Devour or hunger, so read `not_simulated` and
+    `assumed` before trusting absolute numbers; comparisons between teams are the reliable part.
+    """
+    return _answer(lambda: Knowledge.load().hydra_teams(teams, difficulty, season, focus, runs))
+
+
+@mcp.tool()
 def refresh_knowledge() -> dict[str, Any]:
     """Re-read champion kits and stages from the game. Needed only after a game update or when new champions are
     pulled (kits for newly owned champions); takes a few seconds with RAID open."""

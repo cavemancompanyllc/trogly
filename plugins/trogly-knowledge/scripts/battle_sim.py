@@ -71,15 +71,17 @@ KIND_GROUPS = {
 IMMUNITY_WORDS = {
     "[Stun]": ("Stun",), "[Freeze]": ("Freeze",), "[Sleep]": ("Sleep",), "[Decrease SPD]": ("DecreaseSpeed",),
     "[Provoke]": ("Provoke",), "[Fear]": ("Fear",), "[True Fear]": ("Fear",), "[Petrification]": ("Petrification",),
+    "[Poison]": ("ContinuousDamage",), "[Block Active Skills]": ("BlockActiveSkills",),
     "Turn Meter reduction": ("__ReduceStamina",), "MAX HP destruction": ("__DestroyHp",),
 }
 
 SUPPORTED_KINDS = {"Damage", "ApplyBuff", "ApplyDebuff", "Heal", "Revive", "IncreaseStamina", "ReduceStamina", "ExtraTurn",
                    "RemoveDebuff", "RemoveBuff", "ReduceCooldown", "IncreaseCooldown", "ChangeDamageMultiplier",
-                   "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization"}
+                   "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization",
+                   "ChangeCalculatedDamage"}
 # Passive effects that do something when set off (the rest change damage or block effects, handled where those happen).
 TRIGGERED_KINDS = SUPPORTED_KINDS - {"ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects",
-                                     "ActionForVisualization"}
+                                     "ActionForVisualization", "ChangeCalculatedDamage"}
 # Battle phases (BattlePhaseId) a passive's relation names, grouped by the moment the simulator sets them off.
 HIT_PHASES = {"AfterDamageCalculated", "AfterFinalDamageCalculated", "BeforeDamageDealt", "AfterDamageDealt",
               "AfterHealthReduced", "HealthReduced", "AfterEffectProcessedOnTarget", "AfterEffectProcessed"}
@@ -98,6 +100,9 @@ AOE_TARGETS = {"AllEnemies", "AllHeroes"}
 # 2 to 4 on "Attacks N times at random".
 EACH_ENEMY_ONCE_COUNT = 6
 DAMAGE_TAKEN_KINDS = {"IncreaseDamageTaken", "ReduceDamageTaken"}
+# Passive damage changes: ChangeDamageMultiplier weighs the hit before it lands, ChangeCalculatedDamage the calculated
+# damage (CALCULATED_DMG); both add their formula to the damage.
+DAMAGE_CHANGE_KINDS = {"ChangeDamageMultiplier", "ChangeCalculatedDamage"}
 # Damage taken changes a status's name implies, used only when the knowledge file lacks the status's own effect type.
 FALLBACK_DAMAGE_TAKEN = {"IncreaseDamageTaken": 1, "ReduceDamageTaken": -1}
 ENEMY_SKILL_TARGETS = {"AliveEnemies", "AllEnemies", "AliveEnemiesIncludeInvisible"}
@@ -179,6 +184,9 @@ class Fighter:
     alive: bool = True
     damage_dealt: float = 0.0
     hp_raw: int = 0
+    level: int = 0
+    # A Hydra head at 0 HP stays up until the hit's own passives have run (Tide of Hope, Shed Head read CUR_HP==0).
+    dies_after_hit: bool = False
 
     @property
     def max_hp(self) -> float:
@@ -229,6 +237,7 @@ class Battle:
         self.deaths: list[dict[str, Any]] = []
         self.turn_owner: Fighter | None = None
         self.unique_applied: set[tuple[str, Any, str]] = set()  # (owner, effect id, target) applied once this turn
+        self.pending_deaths: list[tuple[Fighter, Fighter | None]] = []
 
     # Turn loop (speed tune rules)
 
@@ -307,6 +316,7 @@ class Battle:
         for fighter in self.fighters:
             if fighter.alive:
                 self.fire(fighter, TURN_END_PHASES, notes)
+        self.settle_deaths()
         self.end_turn(actor)
         self.log(entry, f"{skill.label} {skill.name}" if skill else "-", notes)
 
@@ -350,6 +360,7 @@ class Battle:
             elif status.name in HEAL_OVER_TIME:
                 healed = self.heal(actor, actor.max_hp * HEAL_OVER_TIME[status.name])
                 notes.append(f"heals {round(healed)}")
+            self.settle_deaths()
             if not actor.alive:
                 return
 
@@ -421,6 +432,9 @@ class Battle:
             wanted = set(relation.get("kinds") or [])
             if wanted and not wanted & (kinds or set()):
                 continue
+            # A relation that names one effect fires only after that effect, not after any effect of its phase.
+            if relation.get("effect_id") is not None and (related_effect or {}).get("id") != relation["effect_id"]:
+                continue
             key = (owner.name, passive.get("id"))
             if passive.get("unique") and trigger is not None:
                 if key in trigger.fired:
@@ -460,7 +474,8 @@ class Battle:
         if kind not in SUPPORTED_KINDS:
             self.sim.miss(actor, f"{context.skill.name}: {kind} effect")
             return
-        if kind in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization"):
+        if kind in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect", "AddIgnoredEffects", "ActionForVisualization",
+                    "ChangeCalculatedDamage"):
             return
         targets = self.effect_targets(effect, context, allies, enemies)
         if targets is None:
@@ -483,6 +498,8 @@ class Battle:
                 return
             if kind == "ExtraTurn" and not passing:
                 return
+            if "canUniqueApplyForTurn" in effect["condition"]:
+                self.unique_applied.add((actor.name, effect.get("id"), "turn"))
         chance = effect.get("chance")
         chance = None if chance is None else min(chance + context.skill.chance_bonus, 1.0)
         if kind == "Damage":
@@ -566,6 +583,11 @@ class Battle:
             group = [self.rng.choice(alive_allies)] if alive_allies else []
         elif target == "MostInjuredAlly":
             group = [min(alive_allies, key=lambda a: (a.hp / a.max_hp, a.slot))] if alive_allies else []
+        elif target == "MostInjuredEnemy":
+            group = [min(alive_enemies, key=lambda e: (e.hp / e.max_hp, e.slot))] if alive_enemies else []
+        elif target == "RandomEnemyWithMaxBuffsCount":
+            most = max((e.count_of(True) for e in alive_enemies), default=0)
+            group = [self.rng.choice([e for e in alive_enemies if e.count_of(True) == most])] if alive_enemies else []
         elif target in DEAD_TARGETS:
             dead = [a for a in allies if not a.alive]
             group = dead if target == "AllDeadAllies" else ([self.rng.choice(dead)] if dead else [])
@@ -605,7 +627,7 @@ class Battle:
             return
         context.relation_targets.append(target)
         for _ in range(hits):
-            if not target.alive:
+            if not target.alive or target.hp <= 0:
                 break
             relation = rules.element_relation(actor.affinity, target.affinity)
             hit = rules.hit_type(relation, actor.stat("critical_chance"), self.rng, self.sim.constants)
@@ -619,7 +641,7 @@ class Battle:
             amount *= self.status_reduction(target, effect.get("target") in AOE_TARGETS, "Damage")
             amount *= rules.damage_roll(self.rng)
             scales = "TRG_HP" in (effect.get("multiplier") or "") or "TRG_B_HP" in (effect.get("multiplier") or "")
-            amount = self.passive_damage(actor, target, amount, effect, scales_by_hp=scales)
+            amount = self.passive_damage(actor, target, amount, effect, scales_by_hp=scales, kind=effect["kind"])
             dealt = self.receive(target, actor, amount)
             if actor.lifesteal and dealt > 0:
                 self.heal(actor, dealt * actor.lifesteal)
@@ -630,6 +652,7 @@ class Battle:
                           trigger=context)
                 self.fire(target, HIT_PHASES, notes, kinds={effect["kind"]}, other=actor, related_effect=effect,
                           as_target=True, hit=hit, trigger=context)
+            self.settle_deaths()
 
     def status_multiplier(self, actor: Fighter, target: Fighter, effect: dict[str, Any], context: "SkillContext") -> float:
         """StatusChangeDamageMultiplierProcessor (0x182DDA400): every status on the target or the attacker whose own
@@ -677,14 +700,18 @@ class Battle:
         return factor
 
     def passive_damage(self, actor: Fighter, target: Fighter, amount: float, effect: dict[str, Any] | None,
-                       scales_by_hp: bool, related_status: str | None = None) -> float:
-        """Passive ChangeDamageMultiplier effects: the dealer's on damage it deals (conditions that name
-        isOwnerProduceRelatedEffect), then the target's on damage it takes (the rest)."""
+                       scales_by_hp: bool, related_status: str | None = None, kind: str = "Damage") -> float:
+        """Passive damage changes (DAMAGE_CHANGE_KINDS): the dealer's on damage it deals (conditions that name
+        isOwnerProduceRelatedEffect), then the target's on damage it takes (the rest). A passive whose relation lists
+        effect kinds changes only those: a hit is Damage, Poison ContinuousDamage, HP Burn AoEContinuousDamage."""
         for owner, outgoing in ((actor, True), (target, False)):
             if owner is None:
                 continue
             for passive in owner.passives:
-                if passive["kind"] != "ChangeDamageMultiplier" or not passive.get("multiplier"):
+                if passive["kind"] not in DAMAGE_CHANGE_KINDS or not passive.get("multiplier"):
+                    continue
+                kinds = (passive.get("relation") or {}).get("kinds") or []
+                if kinds and kind not in kinds:
                     continue
                 condition = passive.get("condition") or "1"
                 if ("isOwnerProduceRelatedEffect" in condition) != outgoing:
@@ -704,8 +731,9 @@ class Battle:
     def receive_fixed(self, target: Fighter, producer: Fighter | None, amount: float, related_status: str,
                       scales_by_hp: bool) -> float:
         """Damage over time: no DEF, no hit type, no variance; the target's damage caps still apply."""
-        amount = self.passive_damage(producer, target, amount, None, scales_by_hp=scales_by_hp, related_status=related_status) \
-            if producer is not None else amount
+        kind = "AoEContinuousDamage" if status_family(related_status) == "Burn" else "ContinuousDamage"
+        amount = self.passive_damage(producer, target, amount, None, scales_by_hp=scales_by_hp, related_status=related_status,
+                                     kind=kind) if producer is not None else amount
         return self.receive(target, producer, amount)
 
     def receive(self, target: Fighter, dealer: Fighter | None, amount: float) -> float:
@@ -739,10 +767,20 @@ class Battle:
         if dealer is not None and dealer.side != target.side:
             dealer.damage_dealt += dealt
         if target.hp <= 0 and not target.is_boss:
-            self.die(target, dealer)
+            if target.dies_after_hit:
+                self.pending_deaths.append((target, dealer))
+            else:
+                self.die(target, dealer)
         if target.is_boss:
             target.hp = target.max_hp
         return dealt
+
+    def settle_deaths(self) -> None:
+        """Kills the fighters whose death waited for their hit's passives (dies_after_hit), unless healed meanwhile."""
+        pending, self.pending_deaths = self.pending_deaths, []
+        for target, dealer in pending:
+            if target.alive and target.hp <= 0:
+                self.die(target, dealer)
 
     def die(self, target: Fighter, dealer: Fighter | None) -> None:
         revive = next((s for s in target.statuses if status_family(s.name) == "ReviveOnDeath"), None)
@@ -894,6 +932,10 @@ class Resolver:
                 return target.base.get("health", target.max_hp)
             if key == "HP_PERC":
                 return 100 * target.hp / target.max_hp
+            if key == "CUR_HP":
+                return target.hp
+            if key == "DSTR_HP":
+                return 0.0  # MAX HP destruction isn't simulated, so nothing is ever destroyed
             if key == "STAMINA":
                 return target.stamina / ONE
             if key == "BUFF_COUNT":
@@ -921,6 +963,13 @@ class Resolver:
             "aliveEnemiesCount": lambda: sum(1 for f in self.battle.fighters if f.side != owner.side and f.alive),
             "deadAlliesCount": lambda: sum(1 for f in self.battle.fighters if f.side == owner.side and not f.alive),
             "targetIsBoss": lambda: float(target is not None and target.is_boss),
+            "CALCULATED_DMG": lambda: self.damage if self.damage is not None else 0.0,
+            "ownersLevel": lambda: float(owner.level),
+            "producerIsRelatedEffectTarget": lambda: float(not self.owner_produces),
+            "relatedEffectIsAoe": lambda: float((self.related_effect or {}).get("target") in AOE_TARGETS),
+            "relationDamageIsNotHit": lambda: float(self.related_status is not None),
+            "relationProducerIsBoss": lambda: float(self.related_producer is not None and self.related_producer.is_boss),
+            "canUniqueApplyForTurn": lambda: float(self.unique_key("turn") not in self.battle.unique_applied),
             "heroKilledByProducer": lambda: float(target is not None and not target.alive),
         }
         if name in simple:
@@ -948,14 +997,18 @@ class Resolver:
                 return target.hp
             if name == "targetIsDying":
                 return float(not target.alive or target.hp <= 0)
-            effect_id = (self.context.skill.effects[0].get("id") if self.context and self.context.skill.effects else None)
-            return float((owner.name, effect_id, target.name) not in self.battle.unique_applied)
+            return float(self.unique_key(target.name) not in self.battle.unique_applied)
         if name == "relationProducerIsAlly":
             producer = self.related_producer or (owner if self.owner_produces else None)
             if producer is None:
                 raise formula.Unsupported(name)
             return float(producer.side == owner.side)
         return None
+
+    def unique_key(self, scope: str) -> tuple[str, Any, str]:
+        """The key an effect that applies once per turn (per target, or per turn as a whole) is recorded under."""
+        effect_id = self.context.skill.effects[0].get("id") if self.context and self.context.skill.effects else None
+        return (self.owner.name, effect_id, scope)
 
     def call(self, name: str, args: list[Any]) -> float:
         def has(fighter: Fighter | None, kind: Any) -> float:
@@ -968,6 +1021,8 @@ class Resolver:
             return has(self.target, args[0])
         if name in ("ProducerHasEffectOfKind", "OwnerHasEffectOfKind"):
             return has(self.owner, args[0])
+        if name == "RelationProducerHasEffectOfKind":
+            return has(self.related_producer or (self.target if not self.owner_produces else self.owner), args[0])
         if name == "TotalTurnLeftForEffectOfKindOnOwner":
             families = KIND_GROUPS.get(str(args[0]))
             if families is None:
@@ -1051,20 +1106,20 @@ class Simulator:
         immune: set[str] = set()
         for skill_id in champion_type.get("skill_ids") or []:
             description = (self.knowledge.skills.get(str(skill_id)) or {}).get("description") or ""
-            if "Immune to" not in description:
-                continue
+            # Only the "Immune to ..." sentences: the same text often names statuses it merely weakens.
+            sentences = re.findall(r"immune to[^.]*", description, flags=re.IGNORECASE)
             for word, families in IMMUNITY_WORDS.items():
-                if word in description:
+                if any(word in sentence for sentence in sentences):
                     immune.update(families)
         return immune
 
     # Player's team
 
-    def team_fighters(self, team: list[dict[str, Any]]) -> list[Fighter]:
+    def team_fighters(self, team: list[dict[str, Any]], max_size: int = 5) -> list[Fighter]:
         if not team:
             raise BattleError("Give the team's champions, leader first.")
-        if len(team) > 5:
-            raise BattleError("A Clan Boss team has at most 5 champions.")
+        if len(team) > max_size:
+            raise BattleError(f"A team here has at most {max_size} champions.")
         members = []
         for slot, entry in enumerate(team, start=1):
             entry = entry if isinstance(entry, dict) else {"champion": str(entry)}
@@ -1200,7 +1255,7 @@ class Simulator:
     def flag_unmodelled(self, fighter: Fighter, champion: dict[str, Any], champion_type: dict[str, Any]) -> None:
         for passive in fighter.passives:
             kind = passive["kind"]
-            if kind in ("ChangeDamageMultiplier", "PassiveBlockDebuff", "PassiveBlockEffect"):
+            if kind in ("ChangeDamageMultiplier", "ChangeCalculatedDamage", "PassiveBlockDebuff", "PassiveBlockEffect"):
                 continue
             if (passive.get("mastery") or passive.get("blessing")) and kind == "PassiveChangeStats":
                 continue  # their stat bonuses are already in the calculated stats

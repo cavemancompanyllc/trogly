@@ -16,6 +16,7 @@ from typing import Any
 
 import battle_report
 import battle_sim
+import hydra_sim
 import speed_tune as tuning
 
 KNOWLEDGE_RELATIVE_PATH = Path("data") / "knowledge" / "knowledge.json"
@@ -446,6 +447,31 @@ class Knowledge:
             return battle_report.finish(results, home, analysis, title)
         except (battle_sim.BattleError, battle_report.ReportError) as error:
             raise TroglyError(str(error)) from error
+
+    def hydra_teams(self, teams: list[Any], difficulty: str = "Normal", season: int | None = None,
+                    focus: list[str] | None = None, runs: int = 10, seed: int = 1,
+                    home: Path | None = None) -> dict[str, Any]:
+        """Simulates each team against one Hydra season and difficulty with the same seeds, best first. No HTML report
+        yet: the result is the digest, without turn-by-turn timelines."""
+        state = _state(home or instance_home())
+        if not teams:
+            raise TroglyError("Give at least one team (up to 6 champions, leader first).")
+        runs = max(1, min(int(runs), battle_sim.MAX_RUNS))
+        results = []
+        try:
+            for team in teams:
+                label = None
+                if isinstance(team, dict):
+                    label, team = team.get("label"), team.get("champions") or team.get("team") or []
+                members = [m if isinstance(m, dict) else {"champion": str(m)} for m in team]
+                result = hydra_sim.simulate_hydra(self, state, members, difficulty, season, focus, runs, seed, label=label)
+                result.pop("timeline", None)
+                result.pop("per_run", None)
+                results.append(result)
+        except battle_sim.BattleError as error:
+            raise TroglyError(str(error)) from error
+        results.sort(key=lambda r: -r["damage"]["mean"])
+        return {"teams": results, "assumed": results[0]["assumed"] if results else []}
 
     @staticmethod
     def _aura_view(aura: dict[str, Any]) -> dict[str, Any]:
