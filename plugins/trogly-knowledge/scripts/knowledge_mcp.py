@@ -151,6 +151,25 @@ def hydra_teams(
 
 
 @mcp.tool()
+def chimera_teams(
+    teams: list[Any],
+    difficulty: str = "Normal",
+    rotation: int | None = None,
+    runs: int = 10,
+) -> dict[str, Any]:
+    """Simulates alliance Chimera battles in code from the game's own rules and the Chimera's kit, and ranks the teams
+    by damage.
+
+    teams: list of teams; each is a list of up to 5 champion names (leader first) or {"label", "champions": [...]}, and
+    a champion can be {"champion", "priority", "never", "delay"} as in clan_boss_teams. difficulty: Easy, Normal, Hard,
+    Brutal, Nightmare, UltraNightmare. rotation: the Chimera rotation 1-4; omitted, the last one. runs: battles per
+    team. Form changes need a knowledge file with the Chimera's forms (refresh_knowledge); Trials count as none
+    completed. Read `not_simulated` and `assumed` before trusting absolute numbers.
+    """
+    return _answer(lambda: Knowledge.load().chimera_teams(teams, difficulty, rotation, runs))
+
+
+@mcp.tool()
 def refresh_knowledge() -> dict[str, Any]:
     """Re-read champion kits and stages from the game. Needed only after a game update or when new champions are
     pulled (kits for newly owned champions); takes a few seconds with RAID open."""

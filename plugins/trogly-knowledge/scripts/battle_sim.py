@@ -555,9 +555,10 @@ class Battle:
         elif kind in ("RemoveDebuff", "RemoveBuff"):
             for target in targets:
                 removing = [s for s in target.statuses if s.buff == (kind == "RemoveBuff")]
-                limit = effect.get("count") or len(removing)
+                limit = removal_count(effect, context.skill, len(removing))
                 for status in removing[:limit]:
                     target.statuses.remove(status)
+                    context.removed += 1
 
     def effect_targets(self, effect: dict[str, Any], context: "SkillContext", allies: list[Fighter],
                        enemies: list[Fighter]) -> list[Fighter] | None:
@@ -775,6 +776,10 @@ class Battle:
             target.hp = target.max_hp
         return dealt
 
+    def encounter_value(self, name: str, owner: Fighter) -> float | None:
+        """Formula names only one kind of encounter knows (the Chimera's Trials); None for the rest."""
+        return None
+
     def settle_deaths(self) -> None:
         """Kills the fighters whose death waited for their hit's passives (dies_after_hit), unless healed meanwhile."""
         pending, self.pending_deaths = self.pending_deaths, []
@@ -881,6 +886,17 @@ def stamina_change(text: str | None, current: int, full: int) -> int | None:
     return None
 
 
+def removal_count(effect: dict[str, Any], skill: Skill, present: int) -> int:
+    """How many buffs or debuffs a RemoveBuff / RemoveDebuff takes: UnapplyStatusEffectParams.Count when the knowledge
+    file has it (0 or less meaning all; assumed), else all when the skill's text says "all", else one. The effect's own
+    count is the times it runs, always 1 in the game data, not the number removed."""
+    count = (effect.get("params") or {}).get("UnapplyStatusEffectParams.Count")
+    if count is not None:
+        return present if int(count) <= 0 else min(int(count), present)
+    text = (skill.description or "").lower()
+    return present if re.search(r"remov\w* all\b", text) else min(1, present)
+
+
 def default_priority(skills: list[Skill]) -> list[str]:
     """Newest cooldown skill first (A4, A3, A2), revives after the other cooldown skills, then A1."""
     revives = {s.label for s in skills if "Revive" in s.kinds()}
@@ -898,6 +914,7 @@ class SkillContext:
     owner_produces: bool = True  # the passive's owner caused what set it off (False: it was on the receiving end)
     related_effect: dict[str, Any] | None = None
     fired: set[tuple[str, Any]] = field(default_factory=set)  # unique passive effects already set off by this skill
+    removed: int = 0  # buffs or debuffs this skill has removed so far (removedEffectsCount)
 
 
 class Resolver:
@@ -964,6 +981,11 @@ class Resolver:
             "deadAlliesCount": lambda: sum(1 for f in self.battle.fighters if f.side == owner.side and not f.alive),
             "targetIsBoss": lambda: float(target is not None and target.is_boss),
             "CALCULATED_DMG": lambda: self.damage if self.damage is not None else 0.0,
+            "BUFF_COUNT": lambda: float(owner.count_of(True)),
+            "DEBUFF_COUNT": lambda: float(owner.count_of(False)),
+            "removedEffectsCount": lambda: float(self.context.removed if self.context is not None else 0),
+            "enemiesWithoutBuffsCount": lambda: float(sum(1 for f in self.battle.fighters
+                                                          if f.side != owner.side and f.alive and not f.count_of(True))),
             "ownersLevel": lambda: float(owner.level),
             "producerIsRelatedEffectTarget": lambda: float(not self.owner_produces),
             "relatedEffectIsAoe": lambda: float((self.related_effect or {}).get("target") in AOE_TARGETS),
@@ -977,6 +999,9 @@ class Resolver:
         relation = self.relation_value(name)
         if relation is not None:
             return relation
+        own = self.battle.encounter_value(name, owner)
+        if own is not None:
+            return own
         if name in KIND_GROUPS or name in POISON:
             return float(status_code(name))
         raise formula.Unsupported(name)
