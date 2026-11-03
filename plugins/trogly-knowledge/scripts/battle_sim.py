@@ -93,6 +93,10 @@ HANDLED_PHASES = HIT_PHASES | SKILL_PHASES | TURN_START_PHASES | TURN_END_PHASES
 MASTERY_IDS = range(500000, 501000)
 DEAD_TARGETS = {"AllDeadAllies", "RandomDeadAlly", "RandomRevivableAlly"}
 AOE_TARGETS = {"AllEnemies", "AllHeroes"}
+# A RandomEnemy hit count above any wave's size means "every enemy once, in random order", not repeat hits: the game
+# data uses 10, 15 and 20 only on skills whose text says so (Brutal Battering, Timeslip, Fulminous Ricochet), and
+# 2 to 4 on "Attacks N times at random".
+EACH_ENEMY_ONCE_COUNT = 6
 DAMAGE_TAKEN_KINDS = {"IncreaseDamageTaken", "ReduceDamageTaken"}
 # Damage taken changes a status's name implies, used only when the knowledge file lacks the status's own effect type.
 FALLBACK_DAMAGE_TAKEN = {"IncreaseDamageTaken": 1, "ReduceDamageTaken": -1}
@@ -224,6 +228,7 @@ class Battle:
         self.hits: dict[str, int] = {}
         self.deaths: list[dict[str, Any]] = []
         self.turn_owner: Fighter | None = None
+        self.unique_applied: set[tuple[str, Any, str]] = set()  # (owner, effect id, target) applied once this turn
 
     # Turn loop (speed tune rules)
 
@@ -281,6 +286,7 @@ class Battle:
         entry: dict[str, Any] = {"tick": self.ticks, "who": actor.name, "turn": actor.turns_taken} if self.record else {}
         notes: list[str] = []
         self.turn_owner = actor
+        self.unique_applied.clear()
         for fighter in self.fighters:
             if fighter.alive:
                 self.fire(fighter, TURN_START_PHASES, notes)
@@ -483,6 +489,8 @@ class Battle:
             context.relation_targets = []
             if chance is not None and self.rng.random() >= chance:
                 return
+            if "canUniqueApplyForTargetCurrentTurn" in (effect.get("condition") or ""):
+                self.unique_applied.update((actor.name, effect.get("id"), t.name) for t in targets)
             for target in targets:
                 self.deal_damage(effect, context, target, notes)
         elif kind in ("ApplyBuff", "ApplyDebuff"):
@@ -550,6 +558,8 @@ class Battle:
             group = [chosen] if chosen else []
         elif target in ("RelationTarget", "RelationTargetDuplicates"):
             group = list(context.relation_targets) if context.relation_targets else ([chosen] if chosen else [])
+        elif target == "RandomEnemy" and (effect.get("count") or 1) >= EACH_ENEMY_ONCE_COUNT:
+            group = self.rng.sample(alive_enemies, len(alive_enemies))
         elif target == "RandomEnemy":
             group = [self.rng.choice(alive_enemies)] if alive_enemies else []
         elif target == "RandomAlly":
@@ -588,6 +598,8 @@ class Battle:
     def deal_damage(self, effect: dict[str, Any], context: "SkillContext", target: Fighter, notes: list[str]) -> None:
         actor = context.actor
         hits = max(int(effect.get("count") or 1), 1)
+        if effect.get("target") == "RandomEnemy" and hits >= EACH_ENEMY_ONCE_COUNT:
+            hits = 1
         base = self.value(effect, context, target)
         if base is None:
             return
@@ -913,9 +925,37 @@ class Resolver:
         }
         if name in simple:
             return simple[name]()
+        relation = self.relation_value(name)
+        if relation is not None:
+            return relation
         if name in KIND_GROUPS or name in POISON:
             return float(status_code(name))
         raise formula.Unsupported(name)
+
+    def relation_value(self, name: str) -> float | None:
+        """Names about the hit or effect that set a passive off. The Resolver's target is that effect's target: a
+        passive's RelationTarget, or the hit's target when a damage passive is weighed."""
+        owner, target = self.owner, self.target
+        if name in ("relationTargetIsAlly", "REL_TRG_HP", "REL_TRG_CUR_HP", "targetIsDying",
+                    "canUniqueApplyForTargetCurrentTurn"):
+            if target is None:
+                raise formula.Unsupported(name)
+            if name == "relationTargetIsAlly":
+                return float(target.side == owner.side)
+            if name == "REL_TRG_HP":
+                return target.max_hp
+            if name == "REL_TRG_CUR_HP":
+                return target.hp
+            if name == "targetIsDying":
+                return float(not target.alive or target.hp <= 0)
+            effect_id = (self.context.skill.effects[0].get("id") if self.context and self.context.skill.effects else None)
+            return float((owner.name, effect_id, target.name) not in self.battle.unique_applied)
+        if name == "relationProducerIsAlly":
+            producer = self.related_producer or (owner if self.owner_produces else None)
+            if producer is None:
+                raise formula.Unsupported(name)
+            return float(producer.side == owner.side)
+        return None
 
     def call(self, name: str, args: list[Any]) -> float:
         def has(fighter: Fighter | None, kind: Any) -> float:

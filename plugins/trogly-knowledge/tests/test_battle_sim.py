@@ -353,6 +353,36 @@ def test_a_mastery_hits_once_per_skill_and_the_boss_caps_it(knowledge):
     assert not any("Warmaster" in item for item in result["not_simulated"].get("Poisoner", []))
 
 
+def test_a_once_per_turn_mastery_hits_once_however_many_hits_set_it_off(knowledge):
+    state = with_warmaster(knowledge)
+    knowledge.raw["skills"]["500163"]["effects"][0].update(
+        unique=False, condition="isOwnerProduceRelatedEffect&&!relationTargetIsAlly&&canUniqueApplyForTargetCurrentTurn")
+    knowledge.raw["skills"]["11"]["effects"][0]["count"] = 3
+    team = [{"champion": "Poisoner", "priority": ["A1"], "never": ["A2", "A3"]}]
+    result = battle_sim.simulate_clan_boss(knowledge, state, team, "Nightmare", "Void", runs=1, boss_turn_limit=4)
+    turns = [entry for entry in result["timeline"] if entry["who"] == "Poisoner" and entry["skill"] == "A1 Jab"]
+    assert turns
+    for entry in turns:
+        assert len([event for event in entry["events"] if event.startswith("Warmaster")]) == 1
+    assert not any("Warmaster" in item for item in result["not_simulated"].get("Poisoner", []))
+
+
+def test_relation_variables_name_the_hit_target(knowledge):
+    _, battle, hero, boss, context = one_battle(knowledge)
+    assert battle_sim.Resolver(battle, hero, boss, context).value("relationTargetIsAlly") == 0
+    assert battle_sim.Resolver(battle, hero, hero, context).value("relationTargetIsAlly") == 1
+    assert battle_sim.Resolver(battle, hero, boss, context).value("REL_TRG_HP") == boss.max_hp
+    assert battle_sim.Resolver(battle, hero, boss, context, related_producer=boss).value("relationProducerIsAlly") == 0
+
+
+def test_a_random_hit_count_above_a_wave_means_each_enemy_once(knowledge):
+    knowledge.raw["skills"]["11"]["effects"][0].update(target="RandomEnemy", count=20)
+    _, battle, hero, boss, _ = one_battle(knowledge)
+    context = battle_sim.SkillContext(hero, hero.skills[0], boss)
+    battle.apply_effect(hero.skills[0].effects[0], context, [hero], [boss], notes := [])
+    assert len([note for note in notes if "Demon Lord" in note]) == 1
+
+
 def test_masteries_in_an_older_knowledge_file_are_reported(knowledge):
     state = json.loads(json.dumps(STATE))
     state["champions"][0]["masteries"] = ["500163"]
