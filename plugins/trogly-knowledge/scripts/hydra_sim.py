@@ -1,11 +1,12 @@
 """Alliance Hydra battles on the whole-battle simulator: four heads at once, a turn limit, and the player's own focus
 order. Design and status: Feature #759 (story #761); the engine is `battle_sim`.
 
-The score is the damage the team deals to the heads. A head that reaches 0 HP is decapitated after the hit's own
-passives run (Tide of Hope heals the team, Shed Head starts the neck). This first version keeps a decapitated head down
-for the rest of the battle: the neck and regrowth (the game's HydraNeck variant and GrowHydraHead effect), Devour,
-Hunger counters and Wrath's hit counter wait on the knowledge file's hero variants and on rules still being read from
-game code, so they are listed under `not_simulated`, and strong teams' damage reads low until they land.
+The score is the damage the team deals to the heads (necks included). A head that reaches 0 HP is decapitated after
+the hit's own passives run (Tide of Hope heals the team). Its Shed Head passive turns it into the hero variant its
+Transformation names (the neck); the neck's GrowHydraHead skill later replaces it with a fresh head
+(GrowHydraHeadProcessor, 0x182DC3D10): a head type not standing, its own with GrowSelfProbability and each other with an
+equal share of the rest (NewHeadSetup, 0x182DB6750). Knowledge files without hero variants keep a decapitated head down.
+Devour, Hunger counters and Wrath's hit counter are listed under `not_simulated`.
 """
 
 from __future__ import annotations
@@ -32,11 +33,45 @@ SKIPPED_HEAD_SKILLS = {
 
 
 class HydraSimulator(Simulator):
-    """Builds the heads of one Hydra season and difficulty."""
+    """Builds the heads of one Hydra season and difficulty, and the necks they turn into."""
 
     def __init__(self, knowledge: Any, roster: dict[str, Any]):
         super().__init__(knowledge, roster)
         self.area = HYDRA_AREA
+        self.variants = {v["id"]: v for v in knowledge.raw.get("hero_variants") or []}
+        self.head_templates: list[Fighter] = []
+
+    def neck_variant(self, head: Fighter) -> dict[str, Any] | None:
+        """The variant the head's Shed Head passive (a Transformation) turns it into, when the knowledge file has it."""
+        for passive in head.passives:
+            if passive["kind"] == "Transformation":
+                variant_id = (passive.get("params") or {}).get("TransformationParams.VariantId")
+                if variant_id is not None:
+                    return self.variants.get(int(variant_id))
+        return None
+
+    def neck_fighter(self, head: Fighter, variant: dict[str, Any]) -> Fighter:
+        """The head's neck: the variant's skills, and its stats from the head's (StatsMultiplier per stat, or the
+        variant's own base stats; how ResolveOwnVariantStats combines them is assumed)."""
+        stats = dict(head.stats)
+        multiplier = variant.get("stats_multiplier") or {}
+        for stat, factor in multiplier.items():
+            key = sim_core.aura_stat(stat)
+            if key and factor:
+                stats[key] = stats[key] * factor
+        if not multiplier:
+            for stat, value in (variant.get("base_stats") or {}).items():
+                key = sim_core.aura_stat(stat)
+                if key and value:
+                    stats[key] = value
+        kit = {"skill_ids": variant.get("skill_ids") or []}
+        name = f"{head.name} neck"
+        neck = Fighter(name, "enemy", head.slot, head.type_id, head.affinity, head.rarity, dict(stats), stats,
+                       self.skills_for(kit, {}, name), self.passives_for(kit), level=head.level, dies_after_hit=True)
+        neck.immune = set(head.immune)
+        neck.cooldowns = {s.label: s.start_cooldown for s in neck.skills}
+        neck.hp = neck.max_hp
+        return neck
 
     def hydra_stage(self, difficulty: str, season: int | None) -> dict[str, Any]:
         regions = sorted((r for r in self.knowledge.raw.get("regions") or [] if r.get("area") == HYDRA_AREA),
@@ -78,6 +113,11 @@ class HydraSimulator(Simulator):
                               level=int(enemy.get("level") or 0), dies_after_hit=True)
             fighter.immune = self.immunities(head_type)
             heads.append(fighter)
+        self.head_templates = heads
+        if not self.variants:
+            for head in heads:
+                self.miss_named(head.name, "neck and regrowth (this knowledge file predates hero variants; run "
+                                           "refresh_knowledge)")
         return heads
 
     def miss_named(self, name: str, what: str) -> None:
@@ -158,14 +198,53 @@ class HydraBattle(Battle):
         return dealt
 
     def die(self, target: Fighter, dealer: Fighter | None) -> None:
-        if target.side == "enemy":
-            self.decapitations.append({"head": target.name, "turn": self.turn_count, "by": dealer.name if dealer else None})
-            target.alive = False
-            target.hp = 0.0
-            target.statuses = []
-            target.stamina = 0
+        if target.side != "enemy":
+            super().die(target, dealer)
             return
-        super().die(target, dealer)
+        target.alive = False
+        target.hp = 0.0
+        target.statuses = []
+        target.stamina = 0
+        if target.name.endswith(" neck"):
+            return
+        self.decapitations.append({"head": target.name, "turn": self.turn_count, "by": dealer.name if dealer else None})
+        variant = self.sim.neck_variant(target)
+        if variant is not None:
+            self.fighters.append(self.sim.neck_fighter(target, variant))
+
+    def apply_effect(self, effect: dict[str, Any], context: sim_core.SkillContext, allies: list[Fighter],
+                     enemies: list[Fighter], notes: list[str]) -> None:
+        if effect["kind"] == "Transformation":
+            return  # Shed Head: the neck replaces the head when it dies (die above)
+        if effect["kind"] != "GrowHydraHead":
+            super().apply_effect(effect, context, allies, enemies, notes)
+            return
+        neck = context.actor
+        grown = self.grow_head(neck, effect)
+        if grown is not None:
+            notes.append(f"{neck.name} grows {grown.name}")
+
+    def grow_head(self, neck: Fighter, effect: dict[str, Any]) -> Fighter | None:
+        """GrowHydraHeadProcessor: kill the neck, add a fresh head chosen by NewHeadSetup's odds."""
+        standing = {f.type_id for f in self.fighters if f.side == "enemy" and f.alive and not f.name.endswith(" neck")}
+        candidates = [t for t in self.sim.head_templates if t.type_id not in standing]
+        if not candidates:
+            return None
+        own = next((t for t in candidates if t.type_id == neck.type_id), None)
+        grow_self = float((effect.get("params") or {}).get("GrowHydraHeadParams.GrowSelfProbability", 1.0))
+        others = [t for t in candidates if t is not own]
+        weights = [grow_self if t is own else (1.0 - grow_self) / max(len(candidates) - 1, 1) for t in candidates]
+        if own is None and others:
+            weights = [1.0 / len(others)] * len(others)
+        chosen = self.rng.choices(candidates, weights=weights)[0] if sum(weights) > 0 else candidates[0]
+        neck.alive = False
+        neck.hp = 0.0
+        head = self.sim.fresh_copy([chosen])[0]
+        self.fighters.append(head)
+        for fighter in self.fighters:
+            if fighter.alive:
+                self.fire(fighter, {"HydraHeadGrown"}, [], kinds={"GrowHydraHead"}, other=head)
+        return head
 
 
 def simulate_hydra(knowledge: Any, roster: dict[str, Any], team: list[dict[str, Any]], difficulty: str = "Normal",
@@ -223,7 +302,8 @@ def simulate_hydra(knowledge: Any, roster: dict[str, Any], team: list[dict[str, 
         "reached_turn_limit": sum(r["reached_limit"] for r in results),
         "damage_by_champion": {f.name: round(statistics.mean(r["by_champion"][f.name] for r in results))
                                for f in team_templates},
-        "damage_by_head": {h.name: round(statistics.mean(r["by_head"].get(h.name, 0) for r in results)) for h in heads},
+        "damage_by_head": {name: round(statistics.mean(r["by_head"].get(name, 0) for r in results))
+                           for name in dict.fromkeys([h.name for h in heads] + [n for r in results for n in r["by_head"]])},
         "decapitations": {head: {"runs": len(turns), "mean_turn": round(statistics.mean(turns), 1)}
                           for head, turns in decapitations.items()},
         "first_death": sim_core.summarize_deaths(results),
@@ -251,8 +331,12 @@ def hydra_assumptions(sim: HydraSimulator, assumed_limit: bool, limit: int, defa
     notes = [
         "Turn order, damage, DEF, hit types, resist chances, and the heads' own passives (AoE damage cut, MAX HP "
         "damage caps, immunities) follow the game's code and data (build 2026-10-19).",
-        "A decapitated head stays down for the rest of the battle: the neck, regrowth, Devour, Hunger counters and "
-        "Wrath's hit counter aren't modelled yet, so long battles read low.",
+        ("A decapitated head becomes its neck, which regrows a fresh head (its own, or another head not standing) "
+         "with the game's odds when its grow skill comes off cooldown; the neck's stats from the variant are assumed."
+         if sim.variants else
+         "A decapitated head stays down for the rest of the battle: this knowledge file has no hero variants (necks), "
+         "so long battles read low. Run refresh_knowledge.")
+        + " Devour, Hunger counters and Wrath's hit counter aren't modelled yet.",
         "Champions attack the first standing head in the focus order (then the first standing head); a Provoked champion "
         "attacks its provoker. Heads pick a random champion and use their skills newest-first.",
         f"The battle ends after {limit} turns by anyone, when every head is down, or when the team is dead"

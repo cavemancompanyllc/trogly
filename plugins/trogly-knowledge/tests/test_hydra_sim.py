@@ -98,3 +98,51 @@ def test_the_turn_limit_comes_from_the_knowledge_file_when_it_has_one(knowledge)
     assert result["turn_limit"] == 7
     assert result["turns"]["max"] <= 7
     assert not any("turn limit assumed" in note for note in result["assumed"])
+
+
+def with_necks(knowledge, grow_self):
+    knowledge.raw["skills"]["2604"] = skill("Shed Head [P]", targets=None, effects=[{
+        **effect("Transformation", "Owner", condition="TRG_CUR_HP==0&&ownerIsRelatedEffectTarget"), "passive": True,
+        "params": {"TransformationParams.VariantId": "7"},
+        "relation": {"effect_id": None, "kinds": [], "phases": ["AfterDamageDealt"]}}])
+    knowledge.raw["skills"]["2605"] = skill("Grow Head", 2, [{
+        **effect("GrowHydraHead", "Owner"), "params": {"GrowHydraHeadParams.GrowSelfProbability": str(grow_self)}}],
+        targets="Producer")
+    for type_ in knowledge.raw["champion_types"]:
+        if type_["type_id"] in (26070, 26090):
+            type_["skill_ids"].append(2604)
+    knowledge.raw["hero_variants"] = [{"id": 7, "type": "HydraNeck", "base_stats": None,
+                                       "stats_multiplier": {"Health": 0.5}, "skill_ids": [2605]}]
+
+
+def test_a_decapitated_head_becomes_a_neck_that_regrows_a_head(knowledge):
+    with_necks(knowledge, grow_self=1)
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    hero, decay, torment = sim.fresh_copy(sim.team_fighters(team("Poisoner")) + heads)
+    battle = hydra_sim.HydraBattle(sim, [hero, decay, torment], 1, record=False, focus=[])
+    decay.hp = 1
+    context = battle_sim.SkillContext(hero, hero.skills[0], decay)
+    battle.apply_effect(hero.skills[0].effects[0], context, [hero], [decay, torment], [])
+    neck = battle.fighters[-1]
+    assert neck.name == "Head of Decay neck" and neck.alive
+    assert neck.max_hp == pytest.approx(decay.max_hp * 0.5)
+    neck_context = battle_sim.SkillContext(neck, neck.skills[0], neck)
+    battle.apply_effect(neck.skills[0].effects[0], neck_context, [neck], [hero], notes := [])
+    regrown = battle.fighters[-1]
+    assert (regrown.name, regrown.alive, regrown.hp) == ("Head of Decay", True, regrown.max_hp)
+    assert not neck.alive
+    assert notes == ["Head of Decay neck grows Head of Decay"]
+
+
+def test_a_neck_regrows_only_a_head_that_is_not_standing(knowledge):
+    with_necks(knowledge, grow_self=0)
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    hero, decay, torment = sim.fresh_copy(sim.team_fighters(team("Poisoner")) + heads)
+    battle = hydra_sim.HydraBattle(sim, [hero, decay, torment], 1, record=False, focus=[])
+    neck = sim.neck_fighter(decay, sim.variants[7])
+    decay.alive = False
+    battle.fighters.append(neck)
+    # Torment stands, so Decay is the only head the neck can grow, whatever GrowSelfProbability says.
+    assert battle.grow_head(neck, neck.skills[0].effects[0]).name == "Head of Decay"
