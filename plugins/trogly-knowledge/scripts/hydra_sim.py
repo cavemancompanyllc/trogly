@@ -50,6 +50,10 @@ HUNGER_BASE_WEIGHT = 10
 HUNGER_CRIT_DAMAGE_WEIGHT = 0.2
 # Used only when the knowledge file lacks PlaceHungerCounterParams.IterationsBetweenDevouring.
 ASSUMED_DEVOUR_GAP = 1
+# Each head's AI brain (Brains.HydraHead*Convolutions), by head type id range: Decay = Heal, Torment = Ghost,
+# Blight = Poison, Suffering = Tank, Mischief = Thief, Wrath = Berserk. The type id also names the affinity.
+HEAD_BRAINS = ((26040, 26070, "Heal"), (26080, 26110, "Ghost"), (26120, 26150, "Poison"), (26160, 26190, "Tank"),
+               (26200, 26230, "Thief"), (26240, 26270, "Berserk"))
 
 
 class HydraSimulator(Simulator):
@@ -349,7 +353,21 @@ class HydraBattle(Battle):
             if holder is not None and self.hunger_counter(holder).value <= 0:
                 self.feast_target = holder
                 return feast
+        if head_brain(actor) == "Thief" and not self.thief_may_steal(actor):
+            # HydraHeadThiefConvolutions: A2 scores -1000 without a buff on the head, and -2000 more when its only
+            # buff is Share Damage, so the head uses A1.
+            skipped = {s.label for s in actor.skills if s.label == "A2"} - actor.never
+            actor.never |= skipped
+            try:
+                return super().choose_skill(actor)
+            finally:
+                actor.never -= skipped
         return super().choose_skill(actor)
+
+    @staticmethod
+    def thief_may_steal(head: Fighter) -> bool:
+        buffs = [s for s in head.statuses if s.buff and not s.special]
+        return bool(buffs) and not (len(buffs) == 1 and sim_core.status_family(buffs[0].name) == "ShareDamage")
 
     def end_turn(self, actor: Fighter) -> None:
         digesting = self.digesting(actor)
@@ -370,13 +388,21 @@ class HydraBattle(Battle):
         if skill.targets and "Dead" in skill.targets:
             dead = [a for a in allies if not a.alive and not self.held(a)]
             return dead[0] if dead else None
+        if actor.side == "enemy" and head_brain(actor) == "Heal" and skill.label == "A3" \
+                and skill.targets in sim_core.ALLY_SKILL_TARGETS:
+            # HydraHeadHealConvolutions: A3 scores -1000 on any ally but the most injured (lowest HP%, necks left out).
+            pool = [a for a in allies if a.alive and not a.name.endswith(" neck")
+                    and not (skill.targets.endswith("ExceptProducer") and a is actor)]
+            if pool:
+                return min(pool, key=lambda a: (a.hp / a.max_hp, a.slot))
         if skill.targets not in sim_core.ENEMY_SKILL_TARGETS:
             return super().pick_target(actor, skill, allies, enemies)
         alive = [e for e in enemies if e.alive]
         if not alive:
             return None
         if actor.side == "enemy":
-            # Which champion a head's AI picks (lowest HP, most buffs, ...) isn't read from the game yet: random.
+            # Heads score champions with the shared Clever brain (damage as a share of the target's HP, affinity x40,
+            # debuffs on the target, ...); its scoring maths isn't modelled yet, so the pick is random.
             return self.rng.choice(alive)
         provoke = next((s for s in actor.statuses if sim_core.status_family(s.name) == "Provoke" and s.producer
                         and s.producer.alive), None)
@@ -470,6 +496,13 @@ class HydraBattle(Battle):
             if fighter.alive:
                 self.fire(fighter, {"HydraHeadGrown"}, [], kinds={"GrowHydraHead"}, other=head)
         return head
+
+
+def head_brain(fighter: Fighter) -> str | None:
+    """The head's AI brain from its type id; necks run their variant's brain, not the head's."""
+    if fighter.side != "enemy" or fighter.name.endswith(" neck"):
+        return None
+    return next((kind for low, high, kind in HEAD_BRAINS if low <= (fighter.type_id or 0) <= high), None)
 
 
 def simulate_hydra(knowledge: Any, roster: dict[str, Any], team: list[dict[str, Any]], difficulty: str = "Normal",
@@ -582,7 +615,9 @@ def hydra_assumptions(sim: HydraSimulator, assumed_limit: bool, limit: int, defa
          "so long battles read low. Run refresh_knowledge."),
         devour_note(sim),
         "Champions attack the first standing head in the focus order (then the first standing head); a Provoked champion "
-        "attacks its provoker. Heads pick a random champion and use their skills newest-first.",
+        "attacks its provoker. Heads use their skills newest-first with their own AI rules from the game's code "
+        "(Mischief uses A2 only with a buff other than Share Damage on it; Decay's A3 goes to the most injured head). "
+        "Which champion a head attacks comes from the game's shared AI scoring, which isn't modelled yet: random.",
         f"The battle ends after {limit} turns by anyone, when every head is down, or when the team is dead"
         + (" (turn limit assumed: this knowledge file has none for Hydra)." if assumed_limit else "."),
     ]

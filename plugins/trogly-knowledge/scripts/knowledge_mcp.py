@@ -143,9 +143,9 @@ def hydra_teams(
     teams: list of teams; each is a list of up to 6 champion names (leader first) or {"label", "champions": [...]}, and a
     champion can be {"champion", "priority", "never", "delay"} as in clan_boss_teams. difficulty: Normal, Hard, Brutal,
     Nightmare. season: the Hydra rotation 1-6 (its four heads differ); omitted, the last one. focus: head names in the
-    order the team should attack them (e.g. ["Head of Decay", "Head of Wrath"]). runs: battles per team. This first
-    version keeps decapitated heads down and doesn't model regrowth, Devour or hunger, so read `not_simulated` and
-    `assumed` before trusting absolute numbers; comparisons between teams are the reliable part.
+    order the team should attack them (e.g. ["Head of Decay", "Head of Wrath"]). runs: battles per team. Regrowth,
+    Devour and Digestion follow the game's code when the knowledge file has the head kits (refresh_knowledge). Read
+    `not_simulated` and `assumed` before trusting absolute numbers; comparisons between teams are the reliable part.
     """
     return _answer(lambda: Knowledge.load().hydra_teams(teams, difficulty, season, focus, runs))
 
@@ -163,10 +163,47 @@ def chimera_teams(
     teams: list of teams; each is a list of up to 5 champion names (leader first) or {"label", "champions": [...]}, and
     a champion can be {"champion", "priority", "never", "delay"} as in clan_boss_teams. difficulty: Easy, Normal, Hard,
     Brutal, Nightmare, UltraNightmare. rotation: the Chimera rotation 1-4; omitted, the last one. runs: battles per
-    team. Form changes need a knowledge file with the Chimera's forms (refresh_knowledge); Trials count as none
-    completed. Read `not_simulated` and `assumed` before trusting absolute numbers.
+    team. Form changes and Trials need a knowledge file with the Chimera's forms (refresh_knowledge). Read
+    `not_simulated` and `assumed` before trusting absolute numbers.
     """
     return _answer(lambda: Knowledge.load().chimera_teams(teams, difficulty, rotation, runs))
+
+
+@mcp.tool()
+def hydra_rewards(
+    teams: list[Any],
+    difficulties: list[str] | None = None,
+    season: int | None = None,
+    focus: list[str] | None = None,
+    runs: int = 10,
+    keys: int = 1,
+) -> dict[str, Any]:
+    """Which Hydra difficulty gives each team the best chest: plays the teams at every difficulty (or the given ones)
+    and turns the damage into the chest the game's code awards, with the chance of each chest and what it holds.
+
+    teams, season, focus, runs: as in hydra_teams. keys: keys spent at one difficulty in the reward period (default 1,
+    the chest per key). `best_difficulty` ranks chests by the game's chest id order; `chests` lists their contents
+    and `chest_needs` the damage each chest needs. Needs a knowledge file with the chest tables (refresh_knowledge).
+    """
+    return _answer(lambda: Knowledge.load().hydra_rewards(teams, difficulties, season, focus, runs, keys))
+
+
+@mcp.tool()
+def chimera_rewards(
+    teams: list[Any],
+    difficulties: list[str] | None = None,
+    rotation: int | None = None,
+    runs: int = 10,
+    keys: int = 1,
+) -> dict[str, Any]:
+    """Which Chimera difficulty gives each team the best chest: plays the teams at every difficulty (or the given
+    ones) and turns the damage into the chest the game's code awards, with the chance of each chest and what it holds.
+
+    teams, rotation, runs: as in chimera_teams. keys: keys spent at one difficulty in the reward period (default 1,
+    the chest per key). `best_difficulty` ranks chests by the game's chest id order; `chests` lists their contents
+    and `chest_needs` the damage each chest needs. Needs a knowledge file with the chest tables (refresh_knowledge).
+    """
+    return _answer(lambda: Knowledge.load().chimera_rewards(teams, difficulties, rotation, runs, keys))
 
 
 @mcp.tool()

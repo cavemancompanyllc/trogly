@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import alliance_rewards as rewards
 import battle_report
 import battle_sim
 import chimera_sim
@@ -497,6 +498,66 @@ class Knowledge:
             raise TroglyError(str(error)) from error
         results.sort(key=lambda r: -r["damage"]["mean"])
         return {"teams": results, "assumed": results[0]["assumed"] if results else []}
+
+    def hydra_rewards(self, teams: list[Any], difficulties: list[str] | None = None, season: int | None = None,
+                      focus: list[str] | None = None, runs: int = 10, keys: int = 1, seed: int = 1,
+                      home: Path | None = None) -> dict[str, Any]:
+        """Plays each team at each Hydra difficulty and turns the damage into the chest it earns."""
+        return self._rewards("hydra", teams, difficulties, runs, keys, seed, home,
+                             lambda state, members, difficulty, label: hydra_sim.simulate_hydra(
+                                 self, state, members, difficulty, season, focus, runs, seed, label=label))
+
+    def chimera_rewards(self, teams: list[Any], difficulties: list[str] | None = None, rotation: int | None = None,
+                        runs: int = 10, keys: int = 1, seed: int = 1, home: Path | None = None) -> dict[str, Any]:
+        """Plays each team at each Chimera difficulty and turns the damage into the chest it earns."""
+        return self._rewards("chimera", teams, difficulties, runs, keys, seed, home,
+                             lambda state, members, difficulty, label: chimera_sim.simulate_chimera(
+                                 self, state, members, difficulty, rotation, runs, seed, label=label))
+
+    def _rewards(self, boss: str, teams: list[Any], difficulties: list[str] | None, runs: int, keys: int, seed: int,
+                 home: Path | None, simulate: Any) -> dict[str, Any]:
+        state = _state(home or instance_home())
+        if not teams:
+            raise TroglyError("Give at least one team.")
+        try:
+            tables = rewards.tables(self, boss)
+        except rewards.RewardError as error:
+            raise TroglyError(str(error)) from error
+        wanted = {d.lower() for d in difficulties or []}
+        tables = [t for t in tables if not wanted or t["difficulty"].lower() in wanted]
+        if not tables:
+            raise TroglyError(f"No {boss.title()} difficulty called {', '.join(difficulties or [])}.")
+        runs = max(1, min(int(runs), battle_sim.MAX_RUNS))
+        keys = max(1, int(keys))
+        chimera = boss == "chimera"
+        answers, assumed, seen = [], [], set()
+        try:
+            for team in teams:
+                label = None
+                if isinstance(team, dict):
+                    label, team = team.get("label"), team.get("champions") or team.get("team") or []
+                members = [m if isinstance(m, dict) else {"champion": str(m)} for m in team]
+                rows = []
+                for table in tables:
+                    result = simulate(state, members, table["difficulty"], label)
+                    assumed = assumed or result.get("assumed") or []
+                    row = rewards.outlook(result["per_run"], table, chimera, keys, seed)
+                    turns = result.get("boss_turns") or result.get("turns") or {}
+                    row["turns"] = turns.get("mean")
+                    seen.update(row["chest_odds"])
+                    rows.append(row)
+                best = max(rows, key=lambda r: (r["expected_chest_rank"], r["damage_per_key"]))
+                answers.append({"team": label or " / ".join(m["champion"] for m in members),
+                                "best_difficulty": best["difficulty"], "by_difficulty": rows})
+        except battle_sim.BattleError as error:
+            raise TroglyError(str(error)) from error
+        return {
+            "keys": keys,
+            "teams": answers,
+            "chest_needs": {t["difficulty"]: rewards.bands_view(t) for t in tables},
+            "chests": rewards.contents(self, boss, seen - {rewards.NO_CHEST}),
+            "assumed": rewards.assumptions(boss, keys) + assumed,
+        }
 
     @staticmethod
     def _aura_view(aura: dict[str, Any]) -> dict[str, Any]:

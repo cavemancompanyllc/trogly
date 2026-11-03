@@ -265,3 +265,35 @@ def test_a_hydra_battle_with_devour_reports_swallows(knowledge):
     assert result["devours"]["per_battle"] > 0
     assert not any(item.startswith("Feast") for item in result["not_simulated"].get("Head of Decay", []))
     assert any("Hunger counter" in note for note in result["assumed"])
+
+
+def heads_and_battle(knowledge):
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    fighters = sim.fresh_copy(sim.team_fighters(team("Tank")) + heads)
+    return fighters, hydra_sim.HydraBattle(sim, fighters, 1, record=False, focus=[])
+
+
+def test_each_head_runs_its_own_brain_by_type_id(knowledge):
+    fighters, _ = heads_and_battle(knowledge)
+    brains = {f.name: hydra_sim.head_brain(f) for f in fighters}
+    assert brains == {"Tank": None, "Head of Decay": "Heal", "Head of Torment": "Ghost"}
+
+
+def test_mischief_steals_only_with_a_buff_other_than_share_damage(knowledge):
+    fighters, _ = heads_and_battle(knowledge)
+    head = fighters[1]
+    assert not hydra_sim.HydraBattle.thief_may_steal(head)
+    head.statuses.append(battle_sim.Status("ShareDamage25", 2, head, True))
+    assert not hydra_sim.HydraBattle.thief_may_steal(head)
+    head.statuses.append(battle_sim.Status("IncreaseAttack25", 2, head, True))
+    assert hydra_sim.HydraBattle.thief_may_steal(head)
+
+
+def test_decays_third_skill_goes_to_the_most_injured_head(knowledge):
+    fighters, battle = heads_and_battle(knowledge)
+    champion, decay, torment = fighters
+    decay.hp = decay.max_hp * 0.9
+    torment.hp = torment.max_hp * 0.4
+    ward = battle_sim.Skill("A3", "Rotten Ward", 2604, 5, 0, "AliveAllies", [effect("ApplyBuff", "Target")])
+    assert battle.pick_target(decay, ward, [decay, torment], [champion]) is torment
