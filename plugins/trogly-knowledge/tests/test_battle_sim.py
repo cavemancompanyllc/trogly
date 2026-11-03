@@ -453,3 +453,16 @@ def test_a_damage_passive_changes_only_the_damage_kinds_it_names(knowledge):
     _, battle, hero, boss, _ = one_battle(knowledge)
     assert battle.passive_damage(hero, boss, 1000, HIT, False, kind="Damage") == pytest.approx(1000)
     assert battle.passive_damage(hero, boss, 1000, None, False, kind="ContinuousDamage") == pytest.approx(100)
+
+
+def test_a_passive_hit_on_its_owner_sees_the_attacker_and_the_damage(knowledge):
+    sim = battle_sim.Simulator(knowledge, STATE)
+    owner, attacker = sim.fresh_copy(sim.team_fighters([{"champion": "Tank"}, {"champion": "Poisoner"}]))
+    attacker.statuses.append(battle_sim.Status("Invisible2", 2, attacker, True))
+    battle = battle_sim.Battle(sim, [owner, attacker], 1, record=False)
+    passive = battle_sim.Skill("P", "passive", 0, 0, 0, None, [])
+    context = battle_sim.SkillContext(actor=owner, skill=passive, chosen=attacker, passive=True, owner_produces=False,
+                                      dealt=1234.0)
+    resolver = battle_sim.Resolver(battle, owner, owner, context)
+    assert resolver.call("RelationProducerHasEffectOfKind", ["Invisible_KindId"]) == 1.0
+    assert resolver.value("DEALT_DMG") == 1234.0

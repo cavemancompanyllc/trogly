@@ -63,6 +63,7 @@ KIND_GROUPS = {
     "BlockBuffs_KindId": ("BlockBuffs",), "BlockActiveSkills_KindId": ("BlockActiveSkills",), "Mark_KindId": ("Mark",),
     "Invisible_KindId": ("Invisible",), "StatusReduceDefence_KindId": ("DecreaseDefence",),
     "StatusIncreaseAttack_KindId": ("IncreaseAttack",), "StatusReduceSpeed_KindId": ("DecreaseSpeed",),
+    "StatusReduceAttack_KindId": ("DecreaseAttack",), "StatusIncreaseDefence_KindId": ("IncreaseDefence",),
     "ContinuousDamage_KindId": ("ContinuousDamage",), "AoEContinuousDamage_KindId": ("Burn",), "Burn": ("Burn",),
     "ContinuousDamage5p": ("ContinuousDamage5p",), "ContinuousDamage025p": ("ContinuousDamage025p",),
     "HungerCounter_KindId": ("HungerCounter",), "Devoured_KindId": ("Devoured",), "Digestion_KindId": ("Digestion",),
@@ -422,7 +423,7 @@ class Battle:
 
     def fire(self, owner: Fighter, phases: set[str], notes: list[str], kinds: set[str] | None = None,
              other: Fighter | None = None, related_effect: dict[str, Any] | None = None, as_target: bool = False,
-             hit: str | None = None, trigger: "SkillContext | None" = None) -> None:
+             hit: str | None = None, trigger: "SkillContext | None" = None, dealt: float | None = None) -> None:
         """Sets off the owner's passive effects whose relation names one of `phases` (and, when it lists effect kinds,
         one of `kinds`): masteries, champion passives, and boss passives alike. Effects a passive causes don't set off
         further passives, and a unique effect happens once per triggering skill."""
@@ -449,7 +450,7 @@ class Battle:
                 trigger.fired.add(key)
             skill = Skill("P", passive.get("skill_name") or "passive", 0, 0, 0, None, [passive])
             context = SkillContext(actor=owner, skill=skill, chosen=other, last_hit=hit, passive=True,
-                                   owner_produces=not as_target, related_effect=related_effect)
+                                   owner_produces=not as_target, related_effect=related_effect, dealt=dealt)
             allies = [f for f in self.fighters if f.side == owner.side]
             enemies = [f for f in self.fighters if f.side != owner.side]
             self.apply_effect(passive, context, allies, enemies, notes)
@@ -676,9 +677,9 @@ class Battle:
             notes.append(f"{label} {target.name} {round(dealt)}")
             if not context.passive:
                 self.fire(actor, HIT_PHASES, notes, kinds={effect["kind"]}, other=target, related_effect=effect, hit=hit,
-                          trigger=context)
+                          trigger=context, dealt=dealt)
                 self.fire(target, HIT_PHASES, notes, kinds={effect["kind"]}, other=actor, related_effect=effect,
-                          as_target=True, hit=hit, trigger=context)
+                          as_target=True, hit=hit, trigger=context, dealt=dealt)
             self.settle_deaths()
 
     def status_multiplier(self, actor: Fighter, target: Fighter, effect: dict[str, Any], context: "SkillContext") -> float:
@@ -945,6 +946,7 @@ class SkillContext:
     related_effect: dict[str, Any] | None = None
     fired: set[tuple[str, Any]] = field(default_factory=set)  # unique passive effects already set off by this skill
     removed: int = 0  # buffs or debuffs this skill has removed so far (removedEffectsCount)
+    dealt: float | None = None  # a hit-phase passive: the damage of the hit that set it off (DEALT_DMG)
 
 
 class Resolver:
@@ -966,6 +968,9 @@ class Resolver:
         if context is not None:
             self.related_effect = related_effect if related_effect is not None else context.related_effect
             self.owner_produces = owner_produces and context.owner_produces
+            # A passive set off on its owner's receiving end: the one who caused it is the relation producer.
+            if self.related_producer is None and context.passive and not context.owner_produces:
+                self.related_producer = context.chosen
 
     def value(self, name: str) -> float:
         owner, target = self.owner, self.target
@@ -1011,6 +1016,7 @@ class Resolver:
             "deadAlliesCount": lambda: sum(1 for f in self.battle.fighters if f.side == owner.side and not f.alive),
             "targetIsBoss": lambda: float(target is not None and target.is_boss),
             "CALCULATED_DMG": lambda: self.damage if self.damage is not None else 0.0,
+            "DEALT_DMG": lambda: self.dealt(),
             "BUFF_COUNT": lambda: float(owner.count_of(True)),
             "DEBUFF_COUNT": lambda: float(owner.count_of(False)),
             "removedEffectsCount": lambda: float(self.context.removed if self.context is not None else 0),
@@ -1060,6 +1066,12 @@ class Resolver:
             return float(producer.side == owner.side)
         return None
 
+    def dealt(self) -> float:
+        """DEALT_DMG: the damage of the hit that set off a hit-phase passive."""
+        if self.context is None or self.context.dealt is None:
+            raise formula.Unsupported("DEALT_DMG")
+        return float(self.context.dealt)
+
     def unique_key(self, scope: str) -> tuple[str, Any, str]:
         """The key an effect that applies once per turn (per target, or per turn as a whole) is recorded under."""
         effect_id = self.context.skill.effects[0].get("id") if self.context and self.context.skill.effects else None
@@ -1078,6 +1090,11 @@ class Resolver:
             return has(self.owner, args[0])
         if name == "RelationProducerHasEffectOfKind":
             return has(self.related_producer or (self.target if not self.owner_produces else self.owner), args[0])
+        if name == "RelationProducerBuffCount":
+            producer = self.related_producer or (self.target if not self.owner_produces else self.owner)
+            if producer is None:
+                raise formula.Unsupported(name)
+            return float(producer.count_of(True))
         if name == "TotalTurnLeftForEffectOfKindOnOwner":
             families = KIND_GROUPS.get(str(args[0]))
             if families is None:
