@@ -146,3 +146,122 @@ def test_a_neck_regrows_only_a_head_that_is_not_standing(knowledge):
     battle.fighters.append(neck)
     # Torment stands, so Decay is the only head the neck can grow, whatever GrowSelfProbability says.
     assert battle.grow_head(neck, neck.skills[0].effects[0]).name == "Head of Decay"
+
+
+def with_devour(knowledge, linked=None):
+    """Decay gets Ravening (a Hunger counter of 3, one lower on its turns) and a Feast whose Devour has its digestion
+    formulas: 1000 damage absorbed, 2 turns."""
+    knowledge.raw["skills"]["2606"] = skill("Ravening [P]", targets=None, effects=[
+        {**effect("PlaceHungerCounter", "Owner", "3", condition="EnemyTeamAppliedEffectsTotalCountOfKind(HungerCounter_KindId)==0"),
+         "id": 2600061, "passive": True, "params": {"PlaceHungerCounterParams.IterationsBetweenDevouring": "1"},
+         "relation": {"effect_id": None, "kinds": [], "phases": ["BeforeTurnStarted"]}},
+        {**effect("SetHungerCounter", "AllEnemies", "GetHungerCounterValueOnHero(heroIdWithHungerCounter)-1",
+                  condition="isOwnersTurn"), "id": 2600062, "passive": True,
+         "relation": {"effect_id": None, "kinds": [], "phases": ["AfterTurnStarted"]}},
+    ])
+    knowledge.raw["skills"]["2603"]["effects"] = [{
+        **effect("Devour", "AllEnemies", condition="!OwnerHasEffectOfKind(Digestion_KindId)&&ownersLevel==260"),
+        "id": 2600075, "params": {"DevourParams.DigestionStrengthFormula": "1000",
+                                  "DevourParams.DigestionLifetimeFormula": "2"}}]
+    decay = next(t for t in knowledge.raw["champion_types"] if t["type_id"] == 26070)
+    decay["skill_ids"].append(2606)
+    if linked is not None:
+        knowledge.raw.setdefault("status_effects", {})["Devoured"] = {"id": 690, "effect": {
+            "kind": "Devoured", "params": {"StatusEffectParams.UnapplyWhenProducerDied": linked}}}
+
+
+def devour_battle(knowledge, linked=None):
+    with_devour(knowledge, linked)
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    fighters = sim.fresh_copy(sim.team_fighters(team("Poisoner", "Medic", "Tank")) + heads)
+    battle = hydra_sim.HydraBattle(sim, fighters, 1, record=False, focus=[])
+    return sim, battle, fighters
+
+
+def swallow(battle, decay, victim):
+    battle.hunger_counter(victim).value = 0
+    feast = battle.choose_skill(decay)
+    assert feast.name == "Feast" and battle.feast_target is victim
+    battle.use_skill(decay, feast, notes := [])
+    return notes
+
+
+def test_the_first_hunger_counter_goes_to_the_most_crit_damage_and_counts_down_on_the_heads_turn(knowledge):
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(knowledge)
+    medic.stats["critical_damage"] = 2.5
+    battle.turn_owner = decay
+    battle.fire(decay, battle_sim.TURN_START_PHASES, [])
+    assert battle.hunger_counter(medic).value == 2  # placed at 3, then one lower on Decay's own turn
+    assert battle.hunger_counter(medic).special and medic.count_of(False) == 0
+    used = battle_sim.Resolver(battle, torment, None, None).call("EffectUsedByAllyTeamCountWholeBattleWithId", [2600061.0])
+    assert used == 1  # counted for the heads' whole team, whichever head placed it
+    battle.turn_owner = torment
+    battle.fire(decay, battle_sim.TURN_START_PHASES, [])
+    assert battle.hunger_counter(medic).value == 2  # not Decay's turn, and Medic already has the counter
+    assert sum(1 for f in (poisoner, medic, tank) if battle.hunger_counter(f)) == 1
+    assert battle.choose_skill(decay).name != "Feast"
+
+
+def test_feast_swallows_the_champion_at_0_and_digestion_absorbs_damage_until_it_spits_it_out(knowledge):
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(knowledge)
+    medic.statuses.append(battle_sim.Status("HungerCounter", -1, decay, False, 0.0, special=True))
+    medic.statuses.append(battle_sim.Status("IncreaseAttack25", 2, medic, True))
+    swallow(battle, decay, medic)
+    assert not medic.alive and medic.statuses == [] and battle.held(medic)
+    assert battle.digesting(decay) and battle.choose_skill(decay).name != "Feast"
+    dealt = battle.receive(decay, poisoner, 1500)
+    assert dealt == pytest.approx(500) and battle.absorbed == pytest.approx(1000)
+    assert medic.alive and not battle.digesting(decay) and battle.spat_out == {"Medic": 0}
+    assert battle.devours[0]["outcome"] == "spat out"
+
+
+def test_digestion_running_out_kills_the_champion_for_good(knowledge):
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(knowledge)
+    tank.statuses.append(battle_sim.Status("HungerCounter", -1, decay, False, 0.0, special=True))
+    swallow(battle, decay, tank)
+    battle.end_turn(decay)  # placed this turn on itself: doesn't count down yet
+    battle.end_turn(decay)
+    assert battle.digesting(decay)
+    battle.end_turn(decay)
+    assert not tank.alive and battle.devours[0]["outcome"] == "digested"
+    assert [d["champion"] for d in battle.deaths] == ["Tank"]
+    revive = effect("Revive", "AllDeadAllies", "0.5")
+    context = battle_sim.SkillContext(medic, medic.skills[0], None)
+    assert battle.effect_targets(revive, context, [poisoner, medic, tank], [decay, torment]) == []
+
+
+def test_a_head_that_dies_frees_its_champion_unless_devoured_isnt_linked(knowledge):
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(knowledge)
+    poisoner.statuses.append(battle_sim.Status("HungerCounter", -1, decay, False, 0.0, special=True))
+    swallow(battle, decay, poisoner)
+    battle.die(decay, medic)
+    assert poisoner.alive and battle.devours[0]["outcome"] == "freed" and sim.release_assumed
+
+
+def test_an_unlinked_devoured_status_keeps_the_champion_inside(tmp_path):
+    (tmp_path / "data" / "knowledge").mkdir(parents=True)
+    (tmp_path / "data" / "knowledge" / "knowledge.json").write_text(json.dumps(hydra_knowledge()), encoding="utf-8")
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(Knowledge.load(tmp_path), linked="false")
+    poisoner.statuses.append(battle_sim.Status("HungerCounter", -1, decay, False, 0.0, special=True))
+    swallow(battle, decay, poisoner)
+    battle.die(decay, medic)
+    assert not poisoner.alive and battle.held(poisoner) and not sim.release_on_head_death
+
+
+def test_later_hunger_counters_skip_the_champion_spat_out_last(knowledge):
+    sim, battle, (poisoner, medic, tank, decay, torment) = devour_battle(knowledge)
+    place = next(p for p in decay.passives if p["kind"] == "PlaceHungerCounter")
+    battle.spat_out = {"Poisoner": 3, "Medic": 9}
+    picks = {battle.hunger_victim(place, first=False).name for _ in range(40)}
+    assert picks == {"Poisoner", "Tank"}
+    poisoner.alive = tank.alive = False
+    assert battle.hunger_victim(place, first=False) is medic  # nobody else left: the one spat out goes back in
+
+
+def test_a_hydra_battle_with_devour_reports_swallows(knowledge):
+    with_devour(knowledge)
+    result = hydra_sim.simulate_hydra(knowledge, STATE, team("Tank"), "Normal", runs=3, turn_limit=60)
+    assert result["devours"]["per_battle"] > 0
+    assert not any(item.startswith("Feast") for item in result["not_simulated"].get("Head of Decay", []))
+    assert any("Hunger counter" in note for note in result["assumed"])

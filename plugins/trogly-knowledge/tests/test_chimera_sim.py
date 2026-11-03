@@ -116,3 +116,87 @@ def test_removal_takes_the_exported_count_or_what_the_text_says():
     assert battle_sim.removal_count(plain, single, 4) == 1
     assert battle_sim.removal_count({**plain, "params": {"UnapplyStatusEffectParams.Count": "2"}}, strip, 4) == 2
     assert battle_sim.removal_count({**plain, "params": {"UnapplyStatusEffectParams.Count": "0"}}, single, 4) == 4
+
+
+def with_trials(data, counter_limit=None):
+    """The Ultimate form gets a Trial: started at the battle's start, one step per champion hit, done at 2 steps;
+    Consume hits harder for each completed Trial."""
+    trial_params = {"ChallengeParams.TargetProgress": "2", "ChallengeParams.BasedOnDamage": "true"}
+    if counter_limit is not None:
+        trial_params["ChallengeParams.CounterLimit"] = str(counter_limit)
+    data["skills"]["3701"] = skill("Trial: Wing", targets=None, effects=[
+        {**effect("StartChallenge", "Owner"), "id": 3701001, "passive": True, "params": trial_params,
+         "relation": {"effect_id": None, "kinds": [], "phases": ["BattleStarted"]}},
+        {**effect("SetChallengeProgress", "Owner", "challengeCurrentProgressById(3701)+1",
+                  condition="ownerIsRelatedEffectTarget"), "id": 3701002, "passive": True,
+         "relation": {"effect_id": None, "kinds": ["Damage"], "phases": ["SetDamageChallengeProgress"]}},
+        {**effect("SetChallengeCounter", "Owner", "challengeCurrentCounterById(3701)+1",
+                  condition="ownerIsRelatedEffectTarget&&isCritical"), "id": 3701003, "passive": True,
+         "relation": {"effect_id": None, "kinds": ["Damage"], "phases": ["SetDamageChallengeProgress"]}},
+    ])
+    data["skills"]["3602"]["effects"] = [effect("Damage", "AllEnemies", "1*ATK*(1+countCompletedChallenges)")]
+    chimera = next(t for t in data["champion_types"] if t["type_id"] == 26696)
+    chimera.setdefault("forms", [{"skill_ids": [3601, 3602]}])[0]["challenge_skill_ids"] = [3701]
+    data.setdefault("alliance_bosses", {})["chimera"] = [{
+        "boss": {"difficulty": "Easy"}, "competition_basic_multiplier": 1.0, "competition_advanced_multiplier": 0.25,
+        "trials": [{"skill_id": 3701, "form": "Ultimate", "part": "Wing", "tier": "Easy", "statuses": []}]}]
+    return data
+
+
+def trial_battle(tmp_path, counter_limit=None):
+    data = with_trials(chimera_knowledge(with_forms=True), counter_limit)
+    (tmp_path / "data" / "knowledge").mkdir(parents=True)
+    (tmp_path / "data" / "knowledge" / "knowledge.json").write_text(json.dumps(data), encoding="utf-8")
+    knowledge = Knowledge.load(tmp_path)
+    sim = chimera_sim.ChimeraSimulator(knowledge, STATE)
+    chimera = sim.chimera_fighter(sim.chimera_stage("Easy", None)["stage"])
+    hero, boss = sim.fresh_copy(sim.team_fighters(team("Poisoner")) + [chimera])
+    battle = chimera_sim.ChimeraBattle(sim, [hero, boss], 1, record=False)
+    battle.fire(boss, battle_sim.BATTLE_START_PHASES, [])
+    return knowledge, sim, battle, hero, boss
+
+
+def hit(battle, hero, boss, crit=False):
+    battle.rng.random = (lambda: 0.0) if crit else (lambda: 0.99)
+    jab = hero.skills[0]
+    battle.apply_effect(jab.effects[0], battle_sim.SkillContext(hero, jab, boss), [hero], [boss], notes := [])
+    return notes
+
+
+def test_a_trial_starts_progresses_with_each_hit_and_counts_once_done(tmp_path):
+    knowledge, sim, battle, hero, boss = trial_battle(tmp_path)
+    trial = battle.trials[3701]
+    assert trial.started and trial.progress == 0
+    assert battle.encounter_value("countCompletedChallenges", boss) == 0
+    hit(battle, hero, boss)
+    assert trial.progress == 1 and not trial.completed
+    boss.turns_taken = 4
+    notes = hit(battle, hero, boss)
+    assert trial.completed and trial.completed_turn == 4 and "Trial done: Trial: Wing" in notes
+    hit(battle, hero, boss)
+    assert trial.progress == 2  # capped at the target
+    assert battle.encounter_value("countCompletedChallenges", boss) == 1
+    assert battle_sim.Resolver(battle, boss, hero, None).call("challengeCompletedById", [3701.0]) == 1
+
+
+def test_reaching_a_trials_counter_limit_starts_it_over(tmp_path):
+    knowledge, sim, battle, hero, boss = trial_battle(tmp_path, counter_limit=1)
+    trial = battle.trials[3701]
+    hit(battle, hero, boss, crit=True)
+    # The crit's progress step leaves it short of 2; its counter step reaches the limit, so both start over.
+    assert (trial.progress, trial.counter, trial.completed) == (0, 0, False)
+    hit(battle, hero, boss)
+    hit(battle, hero, boss, crit=True)
+    # Done before the counter step: a completed Trial's counter no longer moves (Challenge.CanChangeCounter).
+    assert (trial.progress, trial.counter, trial.completed) == (2, 0, True)
+
+
+def test_the_battle_reports_trials_and_the_competition_multiplier(tmp_path):
+    data = with_trials(chimera_knowledge(with_forms=False))
+    (tmp_path / "data" / "knowledge").mkdir(parents=True)
+    (tmp_path / "data" / "knowledge" / "knowledge.json").write_text(json.dumps(data), encoding="utf-8")
+    result = chimera_sim.simulate_chimera(Knowledge.load(tmp_path), STATE, team("Poisoner"), "Easy", runs=2, turn_limit=5)
+    assert result["trials"]["completed_mean"] == 1
+    assert result["trials"]["each"]["Trial: Wing"]["completed_runs"] == 2
+    assert result["trials"]["competition_multiplier_mean"] == pytest.approx(1.25)
+    assert not any(item.startswith("Trials") for item in result["not_simulated"].get("Chimera", []))

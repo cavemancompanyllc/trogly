@@ -65,6 +65,7 @@ KIND_GROUPS = {
     "StatusIncreaseAttack_KindId": ("IncreaseAttack",), "StatusReduceSpeed_KindId": ("DecreaseSpeed",),
     "ContinuousDamage_KindId": ("ContinuousDamage",), "AoEContinuousDamage_KindId": ("Burn",), "Burn": ("Burn",),
     "ContinuousDamage5p": ("ContinuousDamage5p",), "ContinuousDamage025p": ("ContinuousDamage025p",),
+    "HungerCounter_KindId": ("HungerCounter",), "Devoured_KindId": ("Devoured",), "Digestion_KindId": ("Digestion",),
 }
 
 # Immunities the game describes in a boss's passive text ("Immune to [Stun], [Freeze] ..."), as status prefixes.
@@ -84,7 +85,8 @@ TRIGGERED_KINDS = SUPPORTED_KINDS - {"ChangeDamageMultiplier", "PassiveBlockDebu
                                      "ActionForVisualization", "ChangeCalculatedDamage"}
 # Battle phases (BattlePhaseId) a passive's relation names, grouped by the moment the simulator sets them off.
 HIT_PHASES = {"AfterDamageCalculated", "AfterFinalDamageCalculated", "BeforeDamageDealt", "AfterDamageDealt",
-              "AfterHealthReduced", "HealthReduced", "AfterEffectProcessedOnTarget", "AfterEffectProcessed"}
+              "AfterHealthReduced", "HealthReduced", "AfterEffectProcessedOnTarget", "AfterEffectProcessed",
+              "SetDamageChallengeProgress"}
 SKILL_PHASES = {"AfterSkillUsed", "AfterAllSkillsUsed", "AfterSkillEffectsProcessed"}
 TURN_START_PHASES = {"BeforeTurnStarted", "AfterTurnStarted"}
 TURN_END_PHASES = {"TurnFinished", "BeforeTurnFinished"}
@@ -139,6 +141,7 @@ class Status:
     buff: bool
     value: float = 0.0
     fresh: bool = False  # placed this turn on its own producer: doesn't count down at the end of this turn
+    special: bool = False  # neither buff nor debuff (Hunger counter, Digestion): not counted, not removed by cleanses
 
 
 @dataclass
@@ -196,7 +199,7 @@ class Fighter:
         return any(status_family(s.name) == family or s.name == family for s in self.statuses)
 
     def count_of(self, buff: bool) -> int:
-        return sum(1 for s in self.statuses if s.buff == buff)
+        return sum(1 for s in self.statuses if s.buff == buff and not s.special)
 
     def stat(self, key: str) -> float:
         value = self.stats[key]
@@ -238,6 +241,10 @@ class Battle:
         self.turn_owner: Fighter | None = None
         self.unique_applied: set[tuple[str, Any, str]] = set()  # (owner, effect id, target) applied once this turn
         self.pending_deaths: list[tuple[Fighter, Fighter | None]] = []
+        self.effect_uses: dict[tuple[str, Any], int] = {}  # (side, effect id): times it went off this battle
+
+    # Passive effect kinds only one kind of encounter acts on (the Hydra's Hunger counters, the Chimera's Trials).
+    encounter_kinds: frozenset[str] = frozenset()
 
     # Turn loop (speed tune rules)
 
@@ -424,7 +431,7 @@ class Battle:
         if trigger is not None and trigger.passive:
             return
         for passive in owner.passives:
-            if passive["kind"] not in TRIGGERED_KINDS:
+            if passive["kind"] not in TRIGGERED_KINDS and passive["kind"] not in self.encounter_kinds:
                 continue
             relation = passive.get("relation") or {}
             if not set(relation.get("phases") or []) & phases:
@@ -500,6 +507,7 @@ class Battle:
                 return
             if "canUniqueApplyForTurn" in effect["condition"]:
                 self.unique_applied.add((actor.name, effect.get("id"), "turn"))
+        self.count_use(actor, effect)
         chance = effect.get("chance")
         chance = None if chance is None else min(chance + context.skill.chance_bonus, 1.0)
         if kind == "Damage":
@@ -554,11 +562,29 @@ class Battle:
                     target.cooldowns[label] = max(left - turns, 0) if kind == "ReduceCooldown" else left + turns
         elif kind in ("RemoveDebuff", "RemoveBuff"):
             for target in targets:
-                removing = [s for s in target.statuses if s.buff == (kind == "RemoveBuff")]
+                removing = [s for s in target.statuses if s.buff == (kind == "RemoveBuff") and not s.special]
                 limit = removal_count(effect, context.skill, len(removing))
                 for status in removing[:limit]:
                     target.statuses.remove(status)
                     context.removed += 1
+
+    def count_use(self, actor: Fighter, effect: dict[str, Any]) -> None:
+        """Counts an effect that went off, for EffectUsedByAllyTeamCountWholeBattleWithId."""
+        key = (actor.side, effect.get("id"))
+        self.effect_uses[key] = self.effect_uses.get(key, 0) + 1
+
+    def condition_holds(self, effect: dict[str, Any], context: "SkillContext", target: Fighter | None) -> bool:
+        """The effect's condition for one target, for effects an encounter applies itself. A formula the simulator
+        can't read counts as not holding and is reported."""
+        if not effect.get("condition"):
+            return True
+        try:
+            return bool(formula.run(effect["condition"], Resolver(self, context.actor, target, context)))
+        except formula.Unsupported as missing:
+            self.sim.miss(context.actor, f"{context.skill.name}: condition uses {missing.name}")
+        except formula.FormulaError:
+            self.sim.miss(context.actor, f"{context.skill.name}: condition {effect['condition']}")
+        return False
 
     def effect_targets(self, effect: dict[str, Any], context: "SkillContext", allies: list[Fighter],
                        enemies: list[Fighter]) -> list[Fighter] | None:
@@ -778,6 +804,10 @@ class Battle:
 
     def encounter_value(self, name: str, owner: Fighter) -> float | None:
         """Formula names only one kind of encounter knows (the Chimera's Trials); None for the rest."""
+        return None
+
+    def encounter_call(self, name: str, args: list[Any], resolver: "Resolver") -> float | None:
+        """Formula functions only one kind of encounter knows (Hunger counters, Trials); None for the rest."""
         return None
 
     def settle_deaths(self) -> None:
@@ -1055,7 +1085,22 @@ class Resolver:
             return float(sum(max(s.turns, 0) for s in self.owner.statuses if status_family(s.name) in families or s.name in families))
         if name == "ABS":
             return abs(float(args[0]))
+        if name == "EffectUsedByAllyTeamCountWholeBattleWithId":
+            return float(self.battle.effect_uses.get((self.owner.side, int(self.argument(args[0]))), 0))
+        if name == "EnemyTeamAppliedEffectsTotalCountOfKind":
+            families = KIND_GROUPS.get(str(args[0]))
+            if families is None:
+                raise formula.Unsupported(f"{name}({args[0]})")
+            return float(sum(1 for f in self.battle.fighters if f.side != self.owner.side for s in f.statuses
+                             if status_family(s.name) in families or s.name in families))
+        own = self.battle.encounter_call(name, args, self)
+        if own is not None:
+            return own
         raise formula.Unsupported(name)
+
+    def argument(self, arg: Any) -> float:
+        """A call's argument: numbers come as they are, names (heroIdWithHungerCounter) are looked up."""
+        return float(arg) if isinstance(arg, (int, float)) else self.value(str(arg))
 
 
 def status_code(name: str) -> int:

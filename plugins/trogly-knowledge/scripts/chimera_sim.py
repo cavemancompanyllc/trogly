@@ -6,17 +6,26 @@ turn count (0x182CA0A80): the form of the first entry in StaticAllianceData.Chim
 turns it has taken, Ultimate after the last. The last key is also its turn limit (ChimeraMaxTurns, 0x1822653F0; checked
 against the boss's own TurnCount as for the Clan Boss). A form change swaps in that form's kit (HeroType.Forms, indexed
 by ChimeraForm) and clears its buffs and debuffs, as Unholy Metamorph says. Knowledge files without the form sequence
-or the form kits keep the Chimera in its first (Ultimate) form with an assumed turn limit. Trials count as none
-completed, so Savage Evolution's boosts stay off.
+or the form kits keep the Chimera in its first (Ultimate) form with an assumed turn limit.
+
+Trials (build 2026-10-19) are the Chimera's own skills: each form's ChallengeSkillTypeIds, whose effects carry
+ChallengeParams (BattleHero.InitChallenges, 0x182E09200, keyed by skill id). StartChallenge starts one unless it is
+done (0x182DD9D90). SetChallengeProgress sets its progress to the formula's value, capped at the target, never lower;
+reaching the target completes it on the Chimera's current turn (0x182DD5F30). SetChallengeCounter sets its counter,
+capped at the limit; reaching the limit resets the counter and the progress (0x182DD5C00). A form's Trials act only
+while the Chimera is in that form. countCompletedChallenges counts the completed ones (Savage Evolution's boosts), and
+the battle's competition multiplier is basic + advanced x completed (UpdateChimeraCompetitionMultiplier,
+0x182DD6280). Knowledge files without Trial skills count none completed.
 """
 
 from __future__ import annotations
 
 import statistics
+from dataclasses import dataclass
 from typing import Any
 
 import battle_sim as sim_core
-from battle_sim import Battle, BattleError, Fighter, Simulator, Tally, percentile, rarity_number
+from battle_sim import Battle, BattleError, Fighter, Resolver, Simulator, Tally, percentile, rarity_number
 
 CHIMERA_AREA = "Chimera"
 # AllianceChimeraDifficulty 1-6, in stage order within each rotation.
@@ -26,6 +35,22 @@ CHIMERA_FORMS = ["Ultimate", "Ram", "Lion", "Snake"]
 CHIMERA_TEAM_SIZE = 5
 # Used only when the knowledge file has no Chimera form sequence (whose last key is the turn limit).
 ASSUMED_TURN_LIMIT = 50
+TRIAL_KINDS = frozenset({"StartChallenge", "SetChallengeProgress", "SetChallengeCounter"})
+
+
+@dataclass
+class Trial:
+    """SharedModel.Battle.Core.Hero.Challenge: one Trial's state in a battle."""
+    target: float
+    limit: int | None
+    started: bool = False
+    progress: float = 0.0
+    counter: int = 0
+    completed_turn: int | None = None
+
+    @property
+    def completed(self) -> bool:
+        return self.progress >= self.target - 1e-9
 
 
 class ChimeraSimulator(Simulator):
@@ -40,6 +65,40 @@ class ChimeraSimulator(Simulator):
             (int(turn), CHIMERA_FORMS.index(form)) for turn, form in (bosses.get("chimera_form_sequence") or {}).items()
             if form in CHIMERA_FORMS)
         self.form_kits: dict[int, tuple[list[sim_core.Skill], list[dict[str, Any]]]] = {}
+        self.trials: dict[int, dict[str, Any]] = {}  # Trial skill id: name, form, part, tier, target, limit
+        self.difficulties = {d["boss"]["difficulty"]: d for d in bosses.get("chimera") or [] if d.get("boss")}
+        self.tier: str | None = None
+
+    def trial_passives(self, skill_ids: list[int], form: int) -> list[dict[str, Any]]:
+        """A form's Trial skills as passives tagged with their Trial, and each Trial's target and limit."""
+        named = {t["skill_id"]: t for d in self.difficulties.values() for t in d.get("trials") or []}
+        own = (self.difficulties.get(self.tier or "") or {}).get("trials") or []
+        named.update({t["skill_id"]: t for t in own})
+        passives = []
+        for skill_id in skill_ids:
+            skill = self.knowledge.skills.get(str(skill_id)) or {}
+            effects = skill.get("effects") or []
+            params = next((e.get("params") for e in effects if "ChallengeParams.TargetProgress" in (e.get("params") or {})), None)
+            if params is None:
+                continue
+            info = named.get(skill_id) or {}
+            limit = params.get("ChallengeParams.CounterLimit")
+            self.trials[skill_id] = {
+                "name": skill.get("name") or f"Trial {skill_id}",
+                "form": info.get("form") or CHIMERA_FORMS[form], "part": info.get("part"), "tier": info.get("tier"),
+                "target": float(params["ChallengeParams.TargetProgress"]),
+                "limit": int(limit) if limit is not None else None,
+                "damage": params.get("ChallengeParams.BasedOnDamage") == "true",
+            }
+            passives += [{**e, "skill_name": skill.get("name"), "trial": skill_id} for e in effects]
+        return passives
+
+    def competition(self) -> tuple[float, float] | None:
+        """The stage's competition multipliers (basic, advanced), when the knowledge file has them."""
+        found = self.difficulties.get(self.tier or "")
+        if not found or found.get("competition_basic_multiplier") is None:
+            return None
+        return float(found["competition_basic_multiplier"]), float(found.get("competition_advanced_multiplier") or 0.0)
 
     def chimera_stage(self, difficulty: str, rotation: int | None) -> dict[str, Any]:
         regions = sorted((r for r in self.knowledge.raw.get("regions") or [] if r.get("area") == CHIMERA_AREA),
@@ -60,6 +119,7 @@ class ChimeraSimulator(Simulator):
         index = CHIMERA_DIFFICULTIES.index(tier)
         if index >= len(stages):
             raise BattleError(f"Chimera {region['code']} has no {tier} stage.")
+        self.tier = tier
         return {"stage": stages[index], "tier": tier, "rotation": region["code"].replace("Chimera", "")}
 
     def chimera_fighter(self, stage: dict[str, Any]) -> Fighter:
@@ -73,7 +133,8 @@ class ChimeraSimulator(Simulator):
         name = "Chimera"
         for index, form in enumerate(chimera_type.get("forms") or []):
             kit = {"skill_ids": list(form.get("skill_ids") or []) + list(form.get("additional_skill_ids") or [])}
-            self.form_kits[index] = (self.skills_for(kit, {}, name), self.passives_for(kit))
+            trials = self.trial_passives(list(form.get("challenge_skill_ids") or []), index)
+            self.form_kits[index] = (self.skills_for(kit, {}, name), self.passives_for(kit) + trials)
         skills, passives = self.form_kits.get(0) or (self.skills_for(chimera_type, {}, name), self.passives_for(chimera_type))
         fighter = Fighter(name, "enemy", 1, enemy["type_id"], chimera_type.get("affinity"),
                           rarity_number(chimera_type.get("rarity")), dict(stats), dict(stats), skills, passives,
@@ -82,7 +143,9 @@ class ChimeraSimulator(Simulator):
         if not self.form_kits or not self.sequence:
             self.miss(fighter, "form changes (this knowledge file predates the Chimera forms and form sequence; run "
                                "refresh_knowledge)")
-        self.miss(fighter, "Trials (counted as none completed, so Savage Evolution's boosts stay off)")
+        if not self.trials:
+            self.miss(fighter, "Trials (this knowledge file has no Trial skills, so none count as completed and Savage "
+                               "Evolution's boosts stay off; run refresh_knowledge)")
         return fighter
 
     def turn_limit(self) -> tuple[int, bool]:
@@ -101,20 +164,83 @@ class ChimeraSimulator(Simulator):
 class ChimeraBattle(Battle):
     """One Chimera battle: champions hit the Chimera; it changes form on its own turns and keeps the damage it takes."""
 
+    encounter_kinds = TRIAL_KINDS
+
     def __init__(self, sim: ChimeraSimulator, fighters: list[Fighter], seed: int, record: bool):
         super().__init__(sim, fighters, seed, record)
         self.chimera = next(f for f in fighters if f.side == "enemy")
         self.form = 0
         self.form_changes: list[dict[str, Any]] = []
+        self.trials = {skill_id: Trial(info["target"], info["limit"]) for skill_id, info in sim.trials.items()}
+
+    def completed_trials(self) -> int:
+        return sum(1 for trial in self.trials.values() if trial.completed)
 
     def encounter_value(self, name: str, owner: Fighter) -> float | None:
         if name == "countCompletedChallenges":
-            return 0.0
+            return float(self.completed_trials())
         if name == "needToChangeChimeraForm":
             return float(self.sim.form_for(owner.turns_taken) != self.form)
         if name == "relevantChimeraForm":
             return float(self.sim.form_for(owner.turns_taken))
         return None
+
+    def encounter_call(self, name: str, args: list[Any], resolver: Resolver) -> float | None:
+        """challenge...ById(skill id): one Trial's state (ChallengeParamsBuilder, 0x182CF4A10)."""
+        if not name.startswith("challenge") or not name.endswith("ById"):
+            return super().encounter_call(name, args, resolver)
+        trial = self.trials.get(int(resolver.argument(args[0])))
+        if trial is None:
+            return 0.0
+        values = {
+            "challengeCurrentProgressById": trial.progress,
+            "challengeCurrentCounterById": float(trial.counter),
+            "challengeTargetProgressById": trial.target,
+            "challengeLimitCounterById": float(trial.limit or 0),
+            "challengeStartedById": float(trial.started),
+            "challengeBasedOnDamageById": float(self.sim.trials[int(resolver.argument(args[0]))]["damage"]),
+            "challengeCompletedById": float(trial.completed),
+            "challengeInProgressById": float(not trial.completed),
+        }
+        return values.get(name)
+
+    def trial_effect(self, effect: dict[str, Any], context: sim_core.SkillContext, allies: list[Fighter],
+                     enemies: list[Fighter], notes: list[str]) -> None:
+        """StartChallengeProcessor, SetChallengeProgressProcessor, SetChallengeCounterProcessor on the Chimera's Trial."""
+        trial = self.trials.get(effect.get("trial"))
+        if trial is None:
+            self.sim.miss(context.actor, f"{context.skill.name}: {effect['kind']} outside a Trial")
+            return
+        targets = self.effect_targets(effect, context, allies, enemies) or [None]
+        target = next((t for t in targets if self.condition_holds(effect, context, t)), False)
+        if target is False:
+            return
+        kind = effect["kind"]
+        if kind == "StartChallenge":
+            if not trial.completed:
+                trial.started = True
+            return
+        if not trial.started or trial.completed:
+            return
+        value = self.value(effect, context, target)
+        if value is None:
+            return
+        self.count_use(context.actor, effect)
+        if kind == "SetChallengeProgress":
+            progress = min(value, trial.target)
+            if progress < trial.progress:
+                return
+            trial.progress = progress
+            if trial.completed:
+                trial.completed_turn = self.chimera.turns_taken
+                notes.append(f"Trial done: {self.sim.trials[effect['trial']]['name']}")
+        elif trial.limit and trial.limit > 0:
+            counter = min(int(value), trial.limit)
+            if counter < 0:
+                return
+            trial.counter = counter
+            if counter == trial.limit:
+                trial.counter, trial.progress = 0, 0.0  # Challenge.Reset: the Trial starts over
 
     def take_turn(self, actor: Fighter) -> None:
         if actor is self.chimera and self.sim.form_kits:
@@ -139,6 +265,9 @@ class ChimeraBattle(Battle):
                      enemies: list[Fighter], notes: list[str]) -> None:
         if effect["kind"] == "ChangeHeroForm":
             return  # done at the start of the Chimera's turn (take_turn above)
+        if effect["kind"] in TRIAL_KINDS:
+            self.trial_effect(effect, context, allies, enemies, notes)
+            return
         super().apply_effect(effect, context, allies, enemies, notes)
 
     def reduce_hp(self, target: Fighter, dealer: Fighter | None, amount: float) -> float:
@@ -172,6 +301,7 @@ class ChimeraBattle(Battle):
             "team_alive": sum(f.alive for f in team),
             "reached_limit": self.chimera.turns_taken >= turn_limit,
             "form_changes": self.form_changes,
+            "trials": {skill_id: trial.completed_turn for skill_id, trial in self.trials.items() if trial.completed},
             "deaths": self.deaths,
             "tallies": self.tallies,
             "hits": self.hits,
@@ -224,6 +354,7 @@ def simulate_chimera(knowledge: Any, roster: dict[str, Any], team: list[dict[str
         "killed": sum(r["killed"] for r in results),
         "reached_turn_limit": sum(r["reached_limit"] for r in results),
         "form_changes": results[0]["form_changes"],
+        "trials": trial_summary(sim, results) if sim.trials else None,
         "damage_by_champion": {f.name: round(statistics.mean(r["by_champion"][f.name] for r in results))
                                for f in team_templates},
         "first_death": sim_core.summarize_deaths(results),
@@ -247,6 +378,24 @@ def simulate_chimera(knowledge: Any, roster: dict[str, Any], team: list[dict[str
     }
 
 
+def trial_summary(sim: ChimeraSimulator, results: list[dict[str, Any]]) -> dict[str, Any]:
+    """How many Trials a battle completes, which ones and on which Chimera turn, and the competition multiplier."""
+    counts = [len(r["trials"]) for r in results]
+    each = {}
+    for skill_id, info in sim.trials.items():
+        turns = [r["trials"][skill_id] for r in results if skill_id in r["trials"]]
+        each[info["name"]] = {"form": info["form"], "part": info["part"], "tier": info["tier"],
+                              "completed_runs": len(turns),
+                              "mean_turn": round(statistics.mean(turns), 1) if turns else None}
+    summary: dict[str, Any] = {"completed_mean": round(statistics.mean(counts), 2), "completed_max": max(counts),
+                               "each": each}
+    competition = sim.competition()
+    if competition is not None:
+        basic, advanced = competition
+        summary["competition_multiplier_mean"] = round(statistics.mean(basic + advanced * c for c in counts), 3)
+    return summary
+
+
 def chimera_assumptions(sim: ChimeraSimulator, assumed_limit: bool, limit: int, default_rotation: bool) -> list[str]:
     notes = [
         "Turn order, damage, DEF, hit types, resist chances, and the Chimera's passives follow the game's code and data "
@@ -257,7 +406,11 @@ def chimera_assumptions(sim: ChimeraSimulator, assumed_limit: bool, limit: int, 
          if sim.form_kits and sim.sequence else
          "The Chimera stays in its first (Ultimate) form: this knowledge file has no form kits or form sequence. Run "
          "refresh_knowledge."),
-        "Trials count as none completed. The Chimera picks a random champion and uses its skills newest-first.",
+        ("Trials follow the game's code: each form's Trial skills start, progress and reset on the game's own "
+         "formulas while the Chimera is in that form, and completed ones feed Savage Evolution and the competition "
+         "multiplier." if sim.trials else
+         "Trials count as none completed: this knowledge file has no Trial skills. Run refresh_knowledge.")
+        + " The Chimera picks a random champion and uses its skills newest-first.",
         f"The battle ends after the Chimera's {limit}th turn, when it dies, or when the team is dead"
         + (" (turn limit assumed: this knowledge file has no Chimera form sequence)." if assumed_limit else "."),
     ]
