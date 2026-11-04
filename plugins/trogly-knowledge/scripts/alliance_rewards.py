@@ -9,8 +9,11 @@ the chest through the difficulty's RewardTypeIdByRange. Stdlib only.
 
 from __future__ import annotations
 
+import json
 import random
 import statistics
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 # AllianceRewardTypeId order, lowest id first. Ranking chests by it is an assumption; the contents are in the answer.
@@ -18,6 +21,14 @@ CHEST_ORDER = ("D", "C", "B", "A", "S", "SS", "SR", "Ultimate", "US", "USS", "US
 EPSILON = 1e-9
 SAMPLES = 2000
 NO_CHEST = "none"
+TEMPLATE = Path(__file__).resolve().parent / "rewards_template.html"
+REPORT_DIRECTORY = Path("data") / "reports"
+# FlexibleRewardType values past MythicalPrize, for knowledge files exported before the Agent named them.
+LATER_ITEM_TYPES = {
+    "12": "CursedCityGroupA", "13": "CursedCityGroupB", "14": "CursedCityGroupC", "15": "CursedCityGroupD",
+    "16": "UserAvatar", "17": "UserFrame", "22": "RelicStones", "23": "RelicMeteor", "24": "RelicStoneAndCarbon",
+    "25": "RelicCraftRareMaterial", "26": "RelicCraftEpicMaterial", "27": "RelicCraftLegendaryMaterial",
+}
 
 
 class RewardError(Exception):
@@ -83,9 +94,12 @@ def chest_odds(per_run: list[float], table: dict[str, Any], chimera: bool, keys:
 def outlook(per_run: list[float], table: dict[str, Any], chimera: bool, keys: int = 1, seed: int = 1) -> dict[str, Any]:
     odds = chest_odds(per_run, table, chimera, keys, seed)
     health = table["health"] or 1
+    ordered = sorted(per_run)
     return {
         "difficulty": table["difficulty"],
         "damage_per_key": round(statistics.mean(per_run)),
+        "damage_p10": round(ordered[int(0.1 * (len(ordered) - 1))]),
+        "damage_p90": round(ordered[int(round(0.9 * (len(ordered) - 1)))]),
         "percent_of_health_per_key": round(statistics.mean(per_run) / health * 100, 4),
         "chest_odds": odds,
         "most_likely_chest": max(odds, key=lambda name: (odds[name], chest_rank(name))),
@@ -102,7 +116,11 @@ def bands_view(table: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def contents(knowledge: Any, boss: str, names: set[str]) -> dict[str, Any]:
-    """What each named chest holds: fixed items, then rolled items with their chances."""
+    """What each named chest holds: fixed items, then rolled items with each one's chance per roll.
+
+    FlexibleReward.RewardProbsByIndex (InitializeProbabilities 0x182C27AA0) is an item's Probability over the sum of
+    all items without a date window, so the weights need not add to 100. When every weight is 0 the client has no odds
+    (the server rolls), and `chance` is left out."""
     chests = (knowledge.raw.get("alliance_bosses") or {}).get(f"{boss}_rewards") or []
     found: dict[str, Any] = {}
     for entry in chests:
@@ -110,26 +128,41 @@ def contents(knowledge: Any, boss: str, names: set[str]) -> dict[str, Any]:
         if name not in names or name in found:
             continue
         rolled = entry.get("rolled") or {}
+        pool = rolled.get("items") or []
+        total = sum(item.get("probability") or 0 for item in pool)
         found[name] = {
             "items": [item_view(knowledge, item) for item in entry.get("items") or []],
             "rolls": rolled.get("count", 0),
-            "rolled_from": [item_view(knowledge, item) for item in rolled.get("items") or []],
+            "roll_limits": rolled.get("roll_limits") or {},
+            "rolled_from": [item_view(knowledge, item, total) for item in pool],
+            "odds_known": total > 0,
         }
     return found
 
 
-def item_view(knowledge: Any, item: dict[str, Any]) -> dict[str, Any]:
+def item_view(knowledge: Any, item: dict[str, Any], weight_total: float = 0) -> dict[str, Any]:
     low, high = item.get("min_count", 0), item.get("max_count", 0)
-    view: dict[str, Any] = {"type": item.get("type"), "count": low if low == high else f"{low}-{high}"}
-    if item.get("probability"):
-        view["chance"] = item["probability"]
+    kind = str(item.get("type"))
+    view: dict[str, Any] = {"type": LATER_ITEM_TYPES.get(kind, kind),
+                            "count": low if high <= low else f"{low}-{high}"}
+    if weight_total > 0:
+        view["chance"] = round((item.get("probability") or 0) / weight_total, 4)
     hero = item.get("hero_id")
     if hero is not None:
-        view["champion"] = (knowledge.types.get(hero) or {}).get("name") or hero
-    for key in ("hero_grade", "artifact_rank", "rarity", "artifact_kind", "artifact_set", "a", "b"):
+        view["champion"] = champion_name(knowledge, hero)
+    for key in ("resource", "black_market_item", "hero_grade", "artifact_rank", "rarity", "artifact_kind",
+                "artifact_set", "a", "b"):
         if item.get(key) is not None:
             view[key] = item[key]
     return view
+
+
+def champion_name(knowledge: Any, hero_id: int) -> Any:
+    """A type id is the champion's base id x 10 plus its grade, so any grade of the same base names it."""
+    found = knowledge.types.get(hero_id)
+    if found is None:
+        found = next((t for type_id, t in knowledge.types.items() if type_id // 10 == hero_id // 10), None)
+    return found["name"] if found else hero_id
 
 
 def assumptions(boss: str, keys: int) -> list[str]:
@@ -145,3 +178,21 @@ def assumptions(boss: str, keys: int) -> list[str]:
                      "(the player's data keeps one damage total and one chest per difficulty per period; the server "
                      "does the sum, so it can't be read from the client).")
     return notes
+
+
+def write_report(answer: dict[str, Any], boss: str, home: Path, title: str | None = None) -> Path:
+    """Fills the chest report template with a rewards answer and saves it; the session publishes it as an Artifact."""
+    name = "Hydra" if boss == "hydra" else "Chimera"
+    data = {"title": title or f"{name} Chest Outlook", "boss": name,
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), **answer}
+    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    html = TEMPLATE.read_text(encoding="utf-8").replace("__TROGLY_DATA__", payload)
+    html = html.replace("<title>Chest Outlook</title>", f"<title>{escape(data['title'])}</title>", 1)
+    target = home / REPORT_DIRECTORY / f"{boss}-chests.html"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(html, encoding="utf-8")
+    return target
+
+
+def escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

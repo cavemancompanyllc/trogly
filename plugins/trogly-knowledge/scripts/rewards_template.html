@@ -1,0 +1,297 @@
+<title>Chest Outlook</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@500;700&family=Alegreya+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: verdict cards, then one difficulty ladder per team (each difficulty's chest bands as a damage track with the
+   team's damage marked on it), then what the chests hold. Each track has its own scale: health differs per difficulty. */
+:root {
+  --ground: #f5f5f8;
+  --panel: #ffffff;
+  --ink: #17151c;
+  --ink-2: #4a4656;
+  --ink-3: #6f6a7d;
+  --rule: #dcdae3;
+  --accent: #5b3fc4;
+  --accent-soft: #e6e1fa;
+  --good: #1f7a3d;
+  --warn: #9a6400;
+  --font-display: "Alegreya SC", "Palatino Linotype", Georgia, serif;
+  --font-body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121017;
+    --panel: #1b1922;
+    --ink: #ecebf2;
+    --ink-2: #c4c0d2;
+    --ink-3: #9893aa;
+    --rule: #33303e;
+    --accent: #9d8af0;
+    --accent-soft: #2c2547;
+    --good: #5cc581;
+    --warn: #e0a73a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121017;
+  --panel: #1b1922;
+  --ink: #ecebf2;
+  --ink-2: #c4c0d2;
+  --ink-3: #9893aa;
+  --rule: #33303e;
+  --accent: #9d8af0;
+  --accent-soft: #2c2547;
+  --good: #5cc581;
+  --warn: #e0a73a;
+}
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 16px/1.5 var(--font-body);
+  margin: 0;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 980px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; }
+section { min-width: 0; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: 2.4rem; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 600 0.75rem/1 var(--font-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.muted { color: var(--ink-2); font-size: 0.9rem; }
+header { display: grid; gap: 12px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--ink-2); }
+.facts b { color: var(--ink); font-weight: 600; }
+section { display: grid; gap: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.verdict { display: grid; gap: 6px; }
+.verdict .big { font-family: var(--font-display); font-size: 1.5rem; }
+.verdict .big b { color: var(--accent); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 600 0.75rem/1 var(--font-data); padding: 4px 8px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-2); white-space: nowrap; }
+.chip.best { color: var(--accent); border-color: currentColor; }
+.chip.none { color: var(--warn); border-color: currentColor; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ladder { display: grid; gap: 4px; }
+.rung { display: grid; grid-template-columns: 9rem minmax(0, 1fr) 13rem; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.rung:last-child { border-bottom: 0; }
+.rung > * { min-width: 0; }
+.rung.is-best .diff { color: var(--accent); }
+.diff { font-weight: 700; }
+.diff small { display: block; font: 400 0.78rem/1.3 var(--font-data); color: var(--ink-3); }
+.track { width: 100%; height: 46px; display: block; overflow: visible; }
+.track .seg-label { font: 600 11px var(--font-data); fill: var(--ink); pointer-events: none; }
+.track .empty { fill: none; stroke: var(--rule); stroke-dasharray: 3 3; }
+.track .spread { fill: var(--ink); opacity: 0.85; }
+.track .mean { stroke: var(--ink); stroke-width: 2.5; }
+.track .mean-halo { stroke: var(--panel); stroke-width: 6; }
+.track .axis { fill: var(--ink-3); font: 10px var(--font-data); }
+.outcome { display: grid; gap: 6px; justify-items: start; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.85rem; color: var(--ink-2); align-items: center; }
+.swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.mark { display: inline-block; width: 18px; height: 8px; background: var(--ink); opacity: 0.85; border-radius: 2px; vertical-align: middle; margin-right: 4px; position: relative; }
+.chest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th { text-align: left; font: 600 0.72rem/1.2 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 6px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+td.r, th.r { text-align: right; }
+tr:last-child td { border-bottom: 0; }
+.chest-name { display: inline-flex; align-items: center; gap: 8px; }
+.chest-name .swatch { width: 18px; height: 18px; border-radius: 4px; }
+ul.notes { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 4px; font-size: 0.9rem; }
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--ground); font: 12px/1.4 var(--font-data); padding: 6px 8px; border-radius: 4px; opacity: 0; transition: opacity 0.1s; z-index: 5; max-width: 260px; }
+@media (prefers-reduced-motion: reduce) { #tip { transition: none; } }
+@media (max-width: 720px) {
+  h1 { font-size: 1.9rem; }
+  .rung { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .chest-grid { grid-template-columns: minmax(0, 1fr); }
+  .panel { padding: 14px; }
+}
+</style>
+
+<script id="trogly-data" type="application/json">__TROGLY_DATA__</script>
+
+<main id="app">
+  <header>
+    <span class="eyebrow">Trogly alliance boss chests</span>
+    <h1 id="title">Chest Outlook</h1>
+    <div class="facts" id="facts"></div>
+  </header>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById("trogly-data").textContent);
+  const app = document.getElementById("app");
+  const ORDER = ["D", "C", "B", "A", "S", "SS", "SR", "Ultimate", "US", "USS", "USR", "USSR"];
+  const rank = (name) => ORDER.indexOf(name);
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
+  const short = (n) => n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(Math.round(n));
+  const pct = (x) => (x * 100).toFixed(x > 0 && x < 0.1 ? 1 : 0) + "%";
+  const words = (s) => String(s).replace(/_/g, " ").replace(/([a-z])([A-Z0-9])/g, "$1 $2");
+  const el = (tag, attrs = {}, ...kids) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "text" ? (node.textContent = v) : node.setAttribute(k, v);
+    for (const kid of kids) if (kid != null) node.append(kid);
+    return node;
+  };
+  const svg = (tag, attrs = {}) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    return node;
+  };
+  const tip = document.getElementById("tip");
+  const showTip = (event, text) => { tip.textContent = text; tip.style.left = Math.min(event.clientX + 12, innerWidth - 270) + "px"; tip.style.top = event.clientY + 12 + "px"; tip.style.opacity = 1; };
+  const hideTip = () => { tip.style.opacity = 0; };
+  const hover = (node, text) => { node.addEventListener("mousemove", (e) => showTip(e, text)); node.addEventListener("mouseleave", hideTip); };
+
+  // One hue, deeper for better chests, mixed into the panel so it holds in both themes.
+  const top = Math.max(1, ...Object.values(data.chest_needs).flat().map((b) => rank(b.chest)));
+  const chestFill = (name) => `color-mix(in srgb, var(--accent) ${Math.round(18 + 62 * rank(name) / top)}%, var(--panel))`;
+  const chestLabel = (name) => name === "none" ? "no chest" : "chest " + name;
+
+  document.getElementById("title").textContent = data.title;
+  const facts = document.getElementById("facts");
+  [["Boss", data.boss], ["Teams", data.teams.length], ["Battles per difficulty", data.runs], ["Keys per difficulty", data.keys], ["Generated", data.generated_at]]
+    .filter(([, v]) => v != null && v !== "")
+    .forEach(([k, v]) => facts.append(el("span", {}, k + " ", el("b", { text: String(v) }))));
+
+  const oddsChips = (odds, best) => el("div", { class: "chips" }, ...Object.entries(odds).map(([name, p]) =>
+    el("span", { class: "chip" + (name === "none" ? " none" : name === best ? " best" : ""), text: (name === "none" ? "none" : name) + " " + pct(p) })));
+
+  // Verdicts.
+  const cards = el("div", { class: "cards" });
+  data.teams.forEach((team) => {
+    const best = team.by_difficulty.find((r) => r.difficulty === team.best_difficulty);
+    const chances = Object.entries(best.chest_odds).filter(([n]) => n !== "none");
+    const headline = best.most_likely_chest !== "none" ? chestLabel(best.most_likely_chest)
+      : chances.length ? `chest ${chances[0][0]} on ${pct(chances[0][1])} of keys` : "no chest anywhere";
+    cards.append(el("div", { class: "panel verdict" },
+      el("span", { class: "eyebrow", text: "Best difficulty" }),
+      el("div", { class: "big" }, el("b", { text: best.difficulty }), " · " + headline),
+      el("div", { class: "muted", text: team.team }),
+      el("div", { class: "muted num", text: `${short(best.damage_per_key)} per key · ${best.percent_of_health_per_key.toFixed(2)}% of its health` }),
+      oddsChips(best.chest_odds, best.most_likely_chest)));
+  });
+  app.append(el("section", {}, el("h2", { text: "Where to spend keys" }),
+    el("p", { class: "muted", text: "The best difficulty is the one whose chest ranks highest on average, by the game's chest order. Compare what the chests hold below: neighbouring chests can differ by only a little." }),
+    cards));
+
+  // Merge neighbouring bands that name the same chest, so the track shows one block per chest.
+  const blocks = (difficulty) => {
+    const out = [];
+    for (const b of data.chest_needs[difficulty] || []) {
+      const last = out[out.length - 1];
+      if (last && last.chest === b.chest && Math.abs(last.to - b.from_damage) < 1) last.to = b.to_damage;
+      else out.push({ chest: b.chest, from: b.from_damage, to: b.to_damage });
+    }
+    return out;
+  };
+
+  const W = 600, H = 46, PAD = 2;
+  const ladder = (team) => {
+    const box = el("div", { class: "ladder" });
+    team.by_difficulty.forEach((row) => {
+      const bands = blocks(row.difficulty);
+      const firstFrom = bands.length ? bands[0].from : 0;
+      const lastFrom = bands.length ? bands[bands.length - 1].from : 0;
+      const max = Math.max(row.damage_p90 * 1.15, lastFrom * 1.2, firstFrom * 1.5, 1);
+      const x = (v) => PAD + Math.min(v, max) / max * (W - 2 * PAD);
+      const track = svg("svg", { class: "track", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img",
+        "aria-label": `${row.difficulty}: ${short(row.damage_per_key)} per key; ${bands.map((b) => `chest ${b.chest} from ${short(b.from)}`).join(", ")}` });
+      track.append(svg("rect", { class: "empty", x: PAD, y: 6, width: Math.max(x(firstFrom) - PAD, 0), height: 22, rx: 3 }));
+      bands.forEach((b) => {
+        const x0 = x(b.from), x1 = x(b.to);
+        const seg = svg("rect", { x: x0 + 1, y: 6, width: Math.max(x1 - x0 - 2, 1), height: 22, rx: 3, fill: chestFill(b.chest) });
+        hover(seg, `Chest ${b.chest}: ${short(b.from)}${b.to >= max ? " and up" : " – " + short(b.to)}`);
+        track.append(seg);
+        if (x1 - x0 > 26) track.append(Object.assign(svg("text", { class: "seg-label", x: x0 + 7, y: 21 }), { textContent: b.chest }));
+      });
+      const p10 = x(row.damage_p10), p90 = x(row.damage_p90), mean = x(row.damage_per_key);
+      track.append(svg("rect", { class: "spread", x: p10, y: 33, width: Math.max(p90 - p10, 3), height: 6, rx: 2 }));
+      track.append(svg("line", { class: "mean-halo", x1: mean, x2: mean, y1: 3, y2: 42 }));
+      const meanLine = svg("line", { class: "mean", x1: mean, x2: mean, y1: 3, y2: 42 });
+      track.append(meanLine);
+      const hit = svg("rect", { x: mean - 8, y: 0, width: 16, height: H, fill: "transparent" });
+      hover(hit, `Mean ${fmt(row.damage_per_key)} · battles ${short(row.damage_p10)} – ${short(row.damage_p90)} (10th–90th)`);
+      track.append(hit);
+      box.append(el("div", { class: "rung" + (row.difficulty === team.best_difficulty ? " is-best" : "") },
+        el("div", { class: "diff" }, row.difficulty,
+          el("small", { text: `${short(data.health[row.difficulty] || 0)} HP` })),
+        track,
+        el("div", { class: "outcome" },
+          el("span", { class: "num muted", text: `${short(row.damage_per_key)} · ${row.percent_of_health_per_key < 0.01 ? "<0.01" : row.percent_of_health_per_key.toFixed(2)}%` }),
+          oddsChips(row.chest_odds, row.most_likely_chest))));
+    });
+    return box;
+  };
+
+  const legend = el("div", { class: "legend" },
+    ...ORDER.filter((n) => Object.values(data.chest_needs).flat().some((b) => b.chest === n))
+      .map((n) => el("span", {}, el("span", { class: "swatch", style: `background:${chestFill(n)}` }), n)),
+    el("span", {}, el("span", { class: "mark" }), "team's battles (10th–90th), line = mean"));
+
+  data.teams.forEach((team, index) => {
+    app.append(el("section", {},
+      el("div", {}, el("span", { class: "eyebrow", text: data.teams.length > 1 ? "Team " + (index + 1) : "Team" }), el("h2", { text: team.team })),
+      el("p", { class: "muted", text: "Each track is one difficulty on its own damage scale. Coloured blocks are the damage each chest needs; the dashed start earns nothing. Hover for exact numbers." }),
+      el("div", { class: "panel" }, legend, ladder(team))));
+  });
+
+  // Chest contents.
+  const RARITY = ["", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical"];
+  const itemName = (item) => {
+    if (item.type === "Artifact" && item.artifact_rank != null) {
+      return [`${item.artifact_rank}★`, RARITY[item.rarity] || "", "artifact", item.artifact_set ? `(${words(item.artifact_set)})` : ""].filter(Boolean).join(" ");
+    }
+    const detail = item.champion != null ? (typeof item.champion === "number" ? "champion #" + item.champion : item.champion)
+      : item.resource || item.black_market_item || item.artifact_set || "";
+    return words(item.type) + (detail ? ` · ${words(detail)}` : "");
+  };
+  const names = Object.keys(data.chests).sort((a, b) => rank(b) - rank(a));
+  if (names.length) {
+    const grid = el("div", { class: "chest-grid" });
+    names.forEach((name) => {
+      const chest = data.chests[name];
+      const panel = el("div", { class: "panel" },
+        el("h3", {}, el("span", { class: "chest-name" }, el("span", { class: "swatch", style: `background:${chestFill(name)}` }), "Chest " + name)));
+      if (chest.items.length) {
+        panel.append(el("div", {}, el("span", { class: "eyebrow", text: "Always" }),
+          el("ul", { class: "notes" }, ...chest.items.map((i) => el("li", { text: `${itemName(i)} × ${i.count}` })))));
+      }
+      if (chest.rolled_from.length) {
+        // Without weights, list each item once with every amount it can come in.
+        const rows = chest.odds_known ? chest.rolled_from : Object.values(chest.rolled_from.reduce((acc, i) => {
+          const key = itemName(i);
+          (acc[key] = acc[key] || { ...i, count: [] }).count.push(i.count);
+          return acc;
+        }, {})).map((i) => ({ ...i, count: i.count.join(" / ") }));
+        const limits = Object.entries(chest.roll_limits || {});
+        const table = el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "Item" }), el("th", { class: "r", text: chest.odds_known ? "Amount" : "Amounts" }),
+          chest.odds_known ? el("th", { class: "r", text: "Per roll" }) : null)),
+          el("tbody", {}, ...rows.map((i) => el("tr", {},
+            el("td", { text: itemName(i) }), el("td", { class: "r num", text: i.type === "Artifact" && !i.count ? "1" : String(i.count) }),
+            chest.odds_known ? el("td", { class: "r num", text: pct(i.chance || 0) }) : null))));
+        panel.append(el("div", { class: "eyebrow", text: `${chest.rolls} rolls from` }), table);
+        if (limits.length) panel.append(el("p", { class: "muted", text: "At most " + limits.map(([k, v]) => `${v} × ${words(k)}`).join(", ") + " per chest." }));
+        if (!chest.odds_known) panel.append(el("p", { class: "muted", text: "The game client has no weights for these rolls (the server rolls them), so only what can drop is shown." }));
+      }
+      grid.append(panel);
+    });
+    app.append(el("section", {}, el("h2", { text: "What the chests hold" }),
+      el("p", { class: "muted", text: "Only the chests these teams can earn. Amounts and weights come from the game's own tables." }), grid));
+  }
+
+  app.append(el("section", {}, el("h2", { text: "How this was worked out" }),
+    el("div", { class: "panel" }, el("ul", { class: "notes" }, ...(data.assumed || []).map((a) => el("li", { text: a }))))));
+})();
+</script>

@@ -501,22 +501,24 @@ class Knowledge:
 
     def hydra_rewards(self, teams: list[Any], difficulties: list[str] | None = None, season: int | None = None,
                       focus: list[str] | None = None, runs: int = 10, keys: int = 1, seed: int = 1,
-                      home: Path | None = None) -> dict[str, Any]:
+                      home: Path | None = None, title: str | None = None) -> dict[str, Any]:
         """Plays each team at each Hydra difficulty and turns the damage into the chest it earns."""
-        return self._rewards("hydra", teams, difficulties, runs, keys, seed, home,
+        return self._rewards("hydra", teams, difficulties, runs, keys, seed, home, title,
                              lambda state, members, difficulty, label: hydra_sim.simulate_hydra(
                                  self, state, members, difficulty, season, focus, runs, seed, label=label))
 
     def chimera_rewards(self, teams: list[Any], difficulties: list[str] | None = None, rotation: int | None = None,
-                        runs: int = 10, keys: int = 1, seed: int = 1, home: Path | None = None) -> dict[str, Any]:
+                        runs: int = 10, keys: int = 1, seed: int = 1, home: Path | None = None,
+                        title: str | None = None) -> dict[str, Any]:
         """Plays each team at each Chimera difficulty and turns the damage into the chest it earns."""
-        return self._rewards("chimera", teams, difficulties, runs, keys, seed, home,
+        return self._rewards("chimera", teams, difficulties, runs, keys, seed, home, title,
                              lambda state, members, difficulty, label: chimera_sim.simulate_chimera(
                                  self, state, members, difficulty, rotation, runs, seed, label=label))
 
     def _rewards(self, boss: str, teams: list[Any], difficulties: list[str] | None, runs: int, keys: int, seed: int,
-                 home: Path | None, simulate: Any) -> dict[str, Any]:
-        state = _state(home or instance_home())
+                 home: Path | None, title: str | None, simulate: Any) -> dict[str, Any]:
+        home = home or instance_home()
+        state = _state(home)
         if not teams:
             raise TroglyError("Give at least one team.")
         try:
@@ -551,13 +553,18 @@ class Knowledge:
                                 "best_difficulty": best["difficulty"], "by_difficulty": rows})
         except battle_sim.BattleError as error:
             raise TroglyError(str(error)) from error
-        return {
+        answer = {
             "keys": keys,
+            "runs": runs,
             "teams": answers,
             "chest_needs": {t["difficulty"]: rewards.bands_view(t) for t in tables},
+            "health": {t["difficulty"]: t["health"] for t in tables},
             "chests": rewards.contents(self, boss, seen - {rewards.NO_CHEST}),
             "assumed": rewards.assumptions(boss, keys) + assumed,
         }
+        answer["report_file"] = str(rewards.write_report(answer, boss, home, title))
+        answer["publish"] = "Publish report_file with the Artifact tool (it is a finished page; don't rewrite it)."
+        return answer
 
     @staticmethod
     def _aura_view(aura: dict[str, Any]) -> dict[str, Any]:

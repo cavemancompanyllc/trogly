@@ -177,6 +177,7 @@ def hydra_rewards(
     focus: list[str] | None = None,
     runs: int = 10,
     keys: int = 1,
+    title: str | None = None,
 ) -> dict[str, Any]:
     """Which Hydra difficulty gives each team the best chest: plays the teams at every difficulty (or the given ones)
     and turns the damage into the chest the game's code awards, with the chance of each chest and what it holds.
@@ -184,8 +185,9 @@ def hydra_rewards(
     teams, season, focus, runs: as in hydra_teams. keys: keys spent at one difficulty in the reward period (default 1,
     the chest per key). `best_difficulty` ranks chests by the game's chest id order; `chests` lists their contents
     and `chest_needs` the damage each chest needs. Needs a knowledge file with the chest tables (refresh_knowledge).
+    Writes an HTML chest report: publish report_file with the Artifact tool as is.
     """
-    return _answer(lambda: Knowledge.load().hydra_rewards(teams, difficulties, season, focus, runs, keys))
+    return _answer(lambda: Knowledge.load().hydra_rewards(teams, difficulties, season, focus, runs, keys, title=title))
 
 
 @mcp.tool()
@@ -195,6 +197,7 @@ def chimera_rewards(
     rotation: int | None = None,
     runs: int = 10,
     keys: int = 1,
+    title: str | None = None,
 ) -> dict[str, Any]:
     """Which Chimera difficulty gives each team the best chest: plays the teams at every difficulty (or the given
     ones) and turns the damage into the chest the game's code awards, with the chance of each chest and what it holds.
@@ -202,8 +205,9 @@ def chimera_rewards(
     teams, rotation, runs: as in chimera_teams. keys: keys spent at one difficulty in the reward period (default 1,
     the chest per key). `best_difficulty` ranks chests by the game's chest id order; `chests` lists their contents
     and `chest_needs` the damage each chest needs. Needs a knowledge file with the chest tables (refresh_knowledge).
+    Writes an HTML chest report: publish report_file with the Artifact tool as is.
     """
-    return _answer(lambda: Knowledge.load().chimera_rewards(teams, difficulties, rotation, runs, keys))
+    return _answer(lambda: Knowledge.load().chimera_rewards(teams, difficulties, rotation, runs, keys, title=title))
 
 
 @mcp.tool()

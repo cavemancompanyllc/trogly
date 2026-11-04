@@ -58,8 +58,9 @@ def chimera_with_tables():
                     for name, health, low, high in (("Easy", 1, "D", "C"), ("Normal", 10**12, "B", "A"))],
         "chimera_rewards": [{"chest": "C", "range": "Range2", "items": [
             {"type": "Resources", "probability": 0, "min_count": 3, "max_count": 3}],
-            "rolled": {"count": 1, "items": [{"type": "Artifact", "probability": 0.25, "min_count": 1, "max_count": 1,
-                                              "artifact_rank": 6}]}}],
+            "rolled": {"count": 1, "roll_limits": {"Artifact": 1}, "items": [
+                {"type": "Artifact", "probability": 1, "min_count": 1, "max_count": 1, "artifact_rank": 6},
+                {"type": "25", "probability": 3, "min_count": 60, "max_count": 0}]}}],
     }
     return data
 
@@ -80,8 +81,28 @@ def test_chimera_rewards_plays_every_difficulty_and_names_the_chests(tmp_path, m
     assert rows["Normal"]["chest_odds"] == {"B": 1.0}
     assert answer["teams"][0]["best_difficulty"] == "Normal"
     assert answer["chests"]["C"]["items"] == [{"type": "Resources", "count": 3}]
-    assert answer["chests"]["C"]["rolled_from"][0] == {"type": "Artifact", "count": 1, "chance": 0.25, "artifact_rank": 6}
+    # Weights are shares of the pool's total; a max_count of 0 means a fixed amount; old exports left late types as ids.
+    assert answer["chests"]["C"]["rolled_from"] == [
+        {"type": "Artifact", "count": 1, "chance": 0.25, "artifact_rank": 6},
+        {"type": "RelicCraftRareMaterial", "count": 60, "chance": 0.75}]
+    assert answer["chests"]["C"]["roll_limits"] == {"Artifact": 1}
     assert answer["chest_needs"]["Normal"][1] == {"chest": "A", "from_damage": 5 * 10**11, "to_damage": 10**22}
+    report = Path(answer["report_file"])
+    assert report.name == "chimera-chests.html"
+    html = report.read_text(encoding="utf-8")
+    assert "__TROGLY_DATA__" not in html and "<title>Chimera Chest Outlook</title>" in html
+    payload = html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    assert json.loads(payload)["teams"][0]["best_difficulty"] == "Normal"
+
+
+def test_server_rolled_chests_have_no_chance_and_champions_resolve_by_base_id():
+    class Fake:
+        types = {6746: {"name": "Mithrala Lifebane"}}
+        raw = {"alliance_bosses": {"hydra_rewards": [{"chest": "D", "items": [], "rolled": {"count": 2, "items": [
+            {"type": "HeroParts", "probability": 0, "min_count": 5, "max_count": 0, "hero_id": 6740}]}}]}}
+    found = rewards.contents(Fake(), "hydra", {"D"})["D"]
+    assert found["odds_known"] is False
+    assert found["rolled_from"] == [{"type": "HeroParts", "count": 5, "champion": "Mithrala Lifebane"}]
 
 
 def test_rewards_say_when_the_knowledge_file_has_no_chest_tables(tmp_path, monkeypatch):
