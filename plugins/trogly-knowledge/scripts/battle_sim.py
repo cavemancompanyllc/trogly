@@ -1082,12 +1082,14 @@ class Resolver:
         """Names about the hit or effect that set a passive off. The Resolver's target is that effect's target: a
         passive's RelationTarget, or the hit's target when a damage passive is weighed."""
         owner, target = self.owner, self.target
-        if name in ("relationTargetIsAlly", "REL_TRG_HP", "REL_TRG_CUR_HP", "targetIsDying",
+        if name in ("relationTargetIsAlly", "relationTargetIsBoss", "REL_TRG_HP", "REL_TRG_CUR_HP", "targetIsDying",
                     "canUniqueApplyForTargetCurrentTurn"):
             if target is None:
                 raise formula.Unsupported(name)
             if name == "relationTargetIsAlly":
                 return float(target.side == owner.side)
+            if name == "relationTargetIsBoss":
+                return float(target.is_boss)
             if name == "REL_TRG_HP":
                 return target.max_hp
             if name == "REL_TRG_CUR_HP":

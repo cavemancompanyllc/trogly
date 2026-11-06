@@ -516,3 +516,9 @@ def test_trial_conditions_read_the_hitters_buffs_and_rule_out_ally_attacks(knowl
                  "((effectThatCausedRelationSkillKindId!=TeamAttack_KindId)||producerIdThatCausedRelationSkill==1)&&"
                  "!relatedEffectIsInCounterattack")
     assert battle_sim.formula.run(condition, resolver) == 1.0
+
+
+def test_relation_target_is_boss(knowledge):
+    _, battle, hero, boss, context = one_battle(knowledge)
+    assert battle_sim.Resolver(battle, hero, boss, context).value("relationTargetIsBoss") == 1.0
+    assert battle_sim.Resolver(battle, hero, hero, context).value("relationTargetIsBoss") == 0.0
