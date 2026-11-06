@@ -67,6 +67,8 @@ KIND_GROUPS = {
     "ContinuousDamage_KindId": ("ContinuousDamage",), "AoEContinuousDamage_KindId": ("Burn",), "Burn": ("Burn",),
     "ContinuousDamage5p": ("ContinuousDamage5p",), "ContinuousDamage025p": ("ContinuousDamage025p",),
     "HungerCounter_KindId": ("HungerCounter",), "Devoured_KindId": ("Devoured",), "Digestion_KindId": ("Digestion",),
+    "LifeDrainOnDamage_KindId": ("LifeDrainOnDamage",), "StatusIncreaseSpeed_KindId": ("IncreaseSpeed",),
+    "BlockDebuff_KindId": ("BlockDebuff",),
 }
 
 # Immunities the game describes in a boss's passive text ("Immune to [Stun], [Freeze] ..."), as status prefixes.
@@ -508,6 +510,8 @@ class Battle:
                 return
             if "canUniqueApplyForTurn" in effect["condition"]:
                 self.unique_applied.add((actor.name, effect.get("id"), "turn"))
+            if "canUniqueApplyForSkill" in effect["condition"]:
+                self.unique_applied.add((actor.name, effect.get("id"), "skill"))
         self.count_use(actor, effect)
         chance = effect.get("chance")
         chance = None if chance is None else min(chance + context.skill.chance_bonus, 1.0)
@@ -562,12 +566,37 @@ class Battle:
                         continue
                     target.cooldowns[label] = max(left - turns, 0) if kind == "ReduceCooldown" else left + turns
         elif kind in ("RemoveDebuff", "RemoveBuff"):
+            selected = self.selected_statuses(effect)
             for target in targets:
-                removing = [s for s in target.statuses if s.buff == (kind == "RemoveBuff") and not s.special]
+                removing = [s for s in target.statuses if s.buff == (kind == "RemoveBuff") and not s.special
+                            and (selected is None or s.name in selected)]
                 limit = removal_count(effect, context.skill, len(removing))
                 for status in removing[:limit]:
                     target.statuses.remove(status)
                     context.removed += 1
+                    self.after_unapplied(effect, status, context, allies, enemies, notes)
+
+    def selected_statuses(self, effect: dict[str, Any]) -> set[str] | None:
+        """UnapplyMode Selected: only the statuses whose type ids StatusEffectTypeIds lists (a status id is its
+        EffectType id); None when any buff or debuff can go."""
+        params = effect.get("params") or {}
+        if params.get("UnapplyStatusEffectParams.UnapplyMode") != "Selected":
+            return None
+        ids = {int(i) for i in re.findall(r"\d+", str(params.get("UnapplyStatusEffectParams.StatusEffectTypeIds") or ""))}
+        return {name for name, data in self.sim.status_types.items() if data.get("id") in ids}
+
+    def after_unapplied(self, effect: dict[str, Any], status: "Status", context: "SkillContext", allies: list[Fighter],
+                        enemies: list[Fighter], notes: list[str]) -> None:
+        """Effects of the same skill tied to this removal (relation effect_id, phase AfterEffectUnappliedFromHero) run
+        once per removed status of their type: the Chimera's Enemy of Mortality moves each Poison on it to every enemy
+        this way. Their conditions only check that this removal caused it, so they are taken as met."""
+        for follow in context.skill.effects:
+            relation = follow.get("relation") or {}
+            if relation.get("effect_id") != effect.get("id") or "AfterEffectUnappliedFromHero" not in (relation.get("phases") or []):
+                continue
+            if all(s["name"] != status.name for s in follow.get("statuses") or []):
+                continue
+            self.apply_effect({**follow, "condition": None}, context, allies, enemies, notes)
 
     def count_use(self, actor: Fighter, effect: dict[str, Any]) -> None:
         """Counts an effect that went off, for EffectUsedByAllyTeamCountWholeBattleWithId."""
@@ -1027,7 +1056,14 @@ class Resolver:
             "relatedEffectIsAoe": lambda: float((self.related_effect or {}).get("target") in AOE_TARGETS),
             "relationDamageIsNotHit": lambda: float(self.related_status is not None),
             "relationProducerIsBoss": lambda: float(self.related_producer is not None and self.related_producer.is_boss),
+            "RelationProducerBuffCount": lambda: self.call("RelationProducerBuffCount", []),
+            # The simulator plays no ally attacks (TeamAttack) and no counterattacks, so no hit comes from either.
+            "effectThatCausedRelationSkillKindId": lambda: 0.0,
+            "TeamAttack_KindId": lambda: float(status_code("TeamAttack_KindId")),
+            "relatedEffectIsInCounterattack": lambda: 0.0,
             "canUniqueApplyForTurn": lambda: float(self.unique_key("turn") not in self.battle.unique_applied),
+            # Once per skill use; the set clears every turn, and the passives using it fire at most once per turn.
+            "canUniqueApplyForSkill": lambda: float(self.unique_key("skill") not in self.battle.unique_applied),
             "heroKilledByProducer": lambda: float(target is not None and not target.alive),
         }
         if name in simple:
@@ -1090,6 +1126,15 @@ class Resolver:
             return has(self.owner, args[0])
         if name == "RelationProducerHasEffectOfKind":
             return has(self.related_producer or (self.target if not self.owner_produces else self.owner), args[0])
+        if name == "TargetHasEffectOfType":
+            if self.target is None:
+                raise formula.Unsupported(name)
+            return float(any(s.name == str(args[0]) for s in self.target.statuses))
+        if name == "EffectsAppliedOnTargetCountOfKind":
+            families = KIND_GROUPS.get(str(args[0]))
+            if self.target is None or families is None:
+                raise formula.Unsupported(f"{name}({args[0]})")
+            return float(sum(1 for s in self.target.statuses if status_family(s.name) in families or s.name in families))
         if name == "RelationProducerBuffCount":
             producer = self.related_producer or (self.target if not self.owner_produces else self.owner)
             if producer is None:

@@ -466,3 +466,53 @@ def test_a_passive_hit_on_its_owner_sees_the_attacker_and_the_damage(knowledge):
     resolver = battle_sim.Resolver(battle, owner, owner, context)
     assert resolver.call("RelationProducerHasEffectOfKind", ["Invisible_KindId"]) == 1.0
     assert resolver.value("DEALT_DMG") == 1234.0
+
+
+def test_a_selected_removal_takes_only_the_listed_statuses_and_moves_each_one_on(knowledge):
+    knowledge.raw["status_effects"] = {"ContinuousDamage5p": {"id": 80}, "DecreaseAttack50": {"id": 140}}
+    sim = battle_sim.Simulator(knowledge, STATE)
+    owner, enemy = sim.fresh_copy(sim.team_fighters([{"champion": "Tank"}, {"champion": "Poisoner"}]))
+    battle = battle_sim.Battle(sim, [owner, enemy], 1, record=False)
+    for name in ("ContinuousDamage5p", "DecreaseAttack50", "ContinuousDamage5p"):
+        owner.statuses.append(battle_sim.Status(name, 2, enemy, False))
+    remove = {**effect("RemoveDebuff", "Owner"), "id": 7, "passive": True,
+              "params": {"UnapplyStatusEffectParams.Count": "-1", "UnapplyStatusEffectParams.UnapplyMode": "Selected",
+                         "UnapplyStatusEffectParams.StatusEffectTypeIds": "80"}}
+    move = {**effect("ApplyDebuff", "AllEnemies", statuses=[("ContinuousDamage5p", 2)]), "id": 8, "passive": True,
+            "condition": "relationTypeId==ContinuousDamage5p",
+            "relation": {"effect_id": 7, "kinds": [], "phases": ["AfterEffectUnappliedFromHero"]}}
+    passive = battle_sim.Skill("Enemy of Mortality", "passive", 0, 0, 0, None, [remove, move])
+    context = battle_sim.SkillContext(actor=owner, skill=passive, chosen=owner, passive=True)
+    applied = []
+    real = battle.apply_effect
+    battle.apply_effect = lambda e, *rest: applied.append(e["id"]) if e["id"] == 8 else real(e, *rest)
+    real(remove, context, [owner], [enemy], [])
+    assert [s.name for s in owner.statuses] == ["DecreaseAttack50"]
+    assert applied == [8, 8]
+
+
+def test_type_and_count_checks_on_the_target(knowledge):
+    sim = battle_sim.Simulator(knowledge, STATE)
+    owner, target = sim.fresh_copy(sim.team_fighters([{"champion": "Tank"}, {"champion": "Poisoner"}]))
+    battle = battle_sim.Battle(sim, [owner, target], 1, record=False)
+    target.statuses += [battle_sim.Status("ContinuousDamage5p", 2, owner, False),
+                        battle_sim.Status("ContinuousDamage025p", 2, owner, False)]
+    context = battle_sim.SkillContext(actor=owner, skill=battle_sim.Skill("A1", "A1", 0, 0, 0, None, []), chosen=target)
+    resolver = battle_sim.Resolver(battle, owner, target, context)
+    assert resolver.call("TargetHasEffectOfType", ["ContinuousDamage025p"]) == 1.0
+    assert resolver.call("TargetHasEffectOfType", ["Burn"]) == 0.0
+    assert resolver.call("EffectsAppliedOnTargetCountOfKind", ["ContinuousDamage_KindId"]) == 2.0
+
+
+def test_trial_conditions_read_the_hitters_buffs_and_rule_out_ally_attacks(knowledge):
+    sim = battle_sim.Simulator(knowledge, STATE)
+    owner, hitter = sim.fresh_copy(sim.team_fighters([{"champion": "Tank"}, {"champion": "Poisoner"}]))
+    battle = battle_sim.Battle(sim, [owner, hitter], 1, record=False)
+    hitter.statuses += [battle_sim.Status("BlockDebuff", 2, hitter, True), battle_sim.Status("IncreaseAttack25", 2, hitter, True)]
+    context = battle_sim.SkillContext(actor=owner, skill=battle_sim.Skill("P", "passive", 0, 0, 0, None, []), chosen=hitter,
+                                      passive=True, owner_produces=False)
+    resolver = battle_sim.Resolver(battle, owner, owner, context)
+    condition = ("RelationProducerHasEffectOfKind(BlockDebuff_KindId)&&RelationProducerBuffCount>=2&&"
+                 "((effectThatCausedRelationSkillKindId!=TeamAttack_KindId)||producerIdThatCausedRelationSkill==1)&&"
+                 "!relatedEffectIsInCounterattack")
+    assert battle_sim.formula.run(condition, resolver) == 1.0
