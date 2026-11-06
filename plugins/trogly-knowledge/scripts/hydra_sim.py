@@ -174,7 +174,7 @@ class HydraSimulator(Simulator):
 
 
 class HydraBattle(Battle):
-    """One Hydra battle: champions hit the first standing head in the focus order; heads hit random champions."""
+    """One Hydra battle: champions hit the first standing head in the focus order; heads pick champions with the Clever brain."""
 
     encounter_kinds = frozenset({"PlaceHungerCounter", "SetHungerCounter"})
 
@@ -401,9 +401,8 @@ class HydraBattle(Battle):
         if not alive:
             return None
         if actor.side == "enemy":
-            # Heads score champions with the shared Clever brain (damage as a share of the target's HP, affinity x40,
-            # debuffs on the target, ...); its scoring maths isn't modelled yet, so the pick is random.
-            return self.rng.choice(alive)
+            # Heads score champions with the shared Clever brain (Battle.clever_target).
+            return self.clever_target(actor, skill, alive)
         provoke = next((s for s in actor.statuses if sim_core.status_family(s.name) == "Provoke" and s.producer
                         and s.producer.alive), None)
         if provoke is not None:

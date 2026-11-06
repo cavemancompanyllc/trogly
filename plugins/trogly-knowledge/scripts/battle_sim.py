@@ -71,6 +71,17 @@ KIND_GROUPS = {
     "BlockDebuff_KindId": ("BlockDebuff",),
 }
 
+# The shared Clever brain's damage-skill rules (Brains..cctor 0x182E1ADE0): score added when the target has the status.
+CLEVER_TARGET_HAS = {
+    "DecreaseDefence30": 15.0, "DecreaseDefence60": 30.0, "IncreaseDamageTaken15": 15.0, "IncreaseDamageTaken25": 30.0,
+    "BlockHeal50p": 10.0, "BlockHeal100p": 20.0, "IncreaseDefence30": -15.0, "IncreaseDefence60": -30.0,
+    "ReflectDamage15": -10.0, "ReflectDamage30": -20.0, "BlockDamage": -30.0,
+}
+CLEVER_ELEMENT = 40.0
+CLEVER_DECISIVE_BLOW = 150.0
+CLEVER_WASTED_HIT = -250.0
+CLEVER_LOW_HP_FROM = 80.0
+
 # Immunities the game describes in a boss's passive text ("Immune to [Stun], [Freeze] ..."), as status prefixes.
 IMMUNITY_WORDS = {
     "[Stun]": ("Stun",), "[Freeze]": ("Freeze",), "[Sleep]": ("Sleep",), "[Decrease SPD]": ("DecreaseSpeed",),
@@ -463,8 +474,8 @@ class Battle:
         if skill.targets in ENEMY_SKILL_TARGETS:
             if not alive_enemies:
                 return None
-            # Champions hit the boss. The boss picks a random living enemy (assumed; the game's AI target isn't read yet).
-            return alive_enemies[0] if not actor.is_boss else self.rng.choice(alive_enemies)
+            # Champions hit the boss; the boss scores each living enemy with the Clever brain.
+            return alive_enemies[0] if not actor.is_boss else self.clever_target(actor, skill, alive_enemies)
         if skill.targets in ALLY_SKILL_TARGETS:
             pool = [a for a in alive_allies if not (skill.targets.endswith("ExceptProducer") and a is actor)]
             if not pool:
@@ -673,6 +684,57 @@ class Battle:
         return None
 
     # Damage
+
+    def clever_target(self, actor: Fighter, skill: Skill, candidates: list[Fighter]) -> Fighter | None:
+        """The enemy an AI hero hits with a damage skill: UtilityAI.PickBestChoice (0x182E71750) sums every rule of the
+        Clever brain for each target and takes the highest score, the first target on a tie. Rules for damage skills
+        (IsDamage): "Basic Damage" HPPercDamage = PotentialDamage / MaxHealth x 100 as is; ElementRelation x40; the
+        target's statuses (CLEVER_TARGET_HAS); "HP Percentage (with Shield)" 80 - (HP + shield) / MaxHealth x 100, 0 from
+        80 up (b__402_2); "Decisive Blow" +150 when PotentialDamage > 1.2 x (HP + shield); "Is Wasted Hit On Unkillable
+        Target" -250 when the target is Unkillable and PotentialDamage > 1.25 x HP (b__402_1). A skill without damage, or
+        an AI hero's own region rules, aren't scored here: the pick is then random."""
+        if not candidates:
+            return None
+        if "Damage" not in skill.kinds():
+            return self.rng.choice(candidates)
+        return max(candidates, key=lambda target: (self.clever_score(actor, skill, target), -candidates.index(target)))
+
+    def clever_score(self, actor: Fighter, skill: Skill, target: Fighter) -> float:
+        potential = self.potential_damage(actor, skill, target)
+        shield = sum(s.value for s in target.statuses if s.name == "Shield" and s.value > 0)
+        with_shield = target.hp + shield
+        score = potential / target.max_hp * 100 if target.max_hp else 0.0
+        score += CLEVER_ELEMENT * rules.element_relation(actor.affinity, target.affinity)
+        score += sum(CLEVER_TARGET_HAS.get(s.name, 0.0) for s in target.statuses)
+        share = with_shield / target.max_hp * 100 if target.max_hp else 0.0
+        score += max(CLEVER_LOW_HP_FROM - share, 0.0)
+        if potential > 1.2 * with_shield:
+            score += CLEVER_DECISIVE_BLOW
+        if target.has("Unkillable") and potential > 1.25 * target.hp:
+            score += CLEVER_WASTED_HIT
+        return score
+
+    def potential_damage(self, actor: Fighter, skill: Skill, target: Fighter) -> float:
+        """PotentialDamage (0x182E59330): the skill's damage effects summed, here as normal hits with no roll and no
+        passives (the game's evaluator isn't decoded further)."""
+        context = SkillContext(actor=actor, skill=skill, chosen=target)
+        total = 0.0
+        for effect in skill.effects:
+            if effect.get("kind") != "Damage" or effect.get("passive"):
+                continue
+            try:
+                base = self.value(effect, context, target)
+            except Exception:  # noqa: BLE001 - a formula the estimate can't read only drops that effect from it
+                base = None
+            if base is None:
+                continue
+            relation = rules.element_relation(actor.affinity, target.affinity)
+            amount = base * rules.damage_multipliers(
+                relation, rules.NORMAL, actor.stat("critical_damage"), skill.damage_bonus, 0.0,
+                rules.stat_damage_modifier({}, {}, self.sim.area, actor.is_boss, target.is_boss), self.sim.constants)
+            amount *= rules.defence_factor(target.stat("defence"), 0.0, -actor.stats.get("ignore_defence", 0.0))
+            total += amount * max(int(effect.get("count") or 1), 1)
+        return total
 
     def deal_damage(self, effect: dict[str, Any], context: "SkillContext", target: Fighter, notes: list[str]) -> None:
         actor = context.actor
@@ -1540,7 +1602,7 @@ def summarize_deaths(results: list[dict[str, Any]]) -> dict[str, Any]:
 def assumptions(sim: Simulator) -> list[str]:
     notes = [
         "Turn order, damage, DEF, hit types, and resist chances follow the game's code (build 2026-10-19).",
-        "The Demon Lord uses A2, A3, A1 in turn and picks a random target; the fight ends after its "
+        "The Demon Lord uses A2, A3, A1 in turn and picks targets with the Clever brain (damage as a share of HP, affinity, kills, debuffs); the fight ends after its "
         f"{DEFAULT_BOSS_TURN_LIMIT}th turn or when the team is dead. Assumed until checked against logged fights.",
         "Stat buffs and debuffs change the stat by their share of the champion's battle stat (measured for SPD).",
         "Weaken, Strengthen, and other damage-multiplying statuses use each status's own formula from the game and "

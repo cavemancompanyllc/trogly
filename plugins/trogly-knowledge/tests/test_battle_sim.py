@@ -522,3 +522,23 @@ def test_relation_target_is_boss(knowledge):
     _, battle, hero, boss, context = one_battle(knowledge)
     assert battle_sim.Resolver(battle, hero, boss, context).value("relationTargetIsBoss") == 1.0
     assert battle_sim.Resolver(battle, hero, hero, context).value("relationTargetIsBoss") == 0.0
+
+
+def test_the_clever_brain_prefers_a_kill_then_low_hp_and_debuffs_and_skips_a_wasted_hit(knowledge):
+    sim = battle_sim.Simulator(knowledge, STATE)
+    a, b = sim.fresh_copy(sim.team_fighters([{"champion": "Tank"}, {"champion": "Poisoner"}]))
+    battle = battle_sim.Battle(sim, [a, b], 1, record=False)
+    skill = battle_sim.Skill("Bite", "A1", 0, 0, 0, "Target", [effect("Damage", "Target", "1*ATK")])
+    battle.potential_damage = lambda actor, s, target: 100.0
+    for f in (a, b):
+        f.stats["health"] = f.hp = 1000.0
+        f.affinity = None
+    # Equal targets: the first one wins the tie.
+    assert battle.clever_target(a, skill, [a, b]) is a
+    b.statuses.append(battle_sim.Status("DecreaseDefence60", 2, a, False))
+    assert battle.clever_target(a, skill, [a, b]) is b
+    a.hp = 50.0  # 100 potential > 1.2 x 50: Decisive Blow, and low HP adds 80 - 5
+    assert battle.clever_score(a, skill, a) == pytest.approx(10 + 150 + 75)
+    a.statuses.append(battle_sim.Status("Unkillable", 1, a, True))
+    assert battle.clever_score(a, skill, a) == pytest.approx(10 + 150 + 75 - 250)
+    assert battle.clever_target(a, skill, [a, b]) is b

@@ -410,7 +410,7 @@ def chimera_assumptions(sim: ChimeraSimulator, assumed_limit: bool, limit: int, 
          "formulas while the Chimera is in that form, and completed ones feed Savage Evolution and the competition "
          "multiplier." if sim.trials else
          "Trials count as none completed: this knowledge file has no Trial skills. Run refresh_knowledge.")
-        + " The Chimera picks a random champion and uses its skills newest-first.",
+        + " The Chimera picks its target with the Clever brain (damage as a share of HP, affinity, kills, debuffs; game code) and uses its skills newest-first.",
         f"The battle ends after the Chimera's {limit}th turn, when it dies, or when the team is dead"
         + (" (turn limit assumed: this knowledge file has no Chimera form sequence)." if assumed_limit else "."),
     ]
