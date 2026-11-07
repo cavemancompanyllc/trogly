@@ -69,6 +69,8 @@ KIND_GROUPS = {
     "HungerCounter_KindId": ("HungerCounter",), "Devoured_KindId": ("Devoured",), "Digestion_KindId": ("Digestion",),
     "LifeDrainOnDamage_KindId": ("LifeDrainOnDamage",), "StatusIncreaseSpeed_KindId": ("IncreaseSpeed",),
     "BlockDebuff_KindId": ("BlockDebuff",),
+    # The statuses whose own effect is a StatusChangeDamageMultiplier (Wrath's Vengeance is BloodRage).
+    "StatusChangeDamageMultiplier_KindId": ("BloodRage", "MinotaurIncreaseDamage"),
 }
 
 # The shared Clever brain's damage-skill rules (Brains..cctor 0x182E1ADE0): score added when the target has the status.
@@ -978,7 +980,10 @@ class Battle:
             existing.value = max(existing.value, value)
             existing.producer = actor
         else:
-            target.statuses.append(Status(name, turns, actor, buff, value, fresh=(target is actor)))
+            # Only a status placed on its producer during the producer's own turn skips that turn's countdown; one a
+            # passive places on its owner during someone else's turn counts down at the end of the owner's next turn.
+            target.statuses.append(Status(name, turns, actor, buff, value,
+                                          fresh=target is actor and self.turn_owner in (None, actor)))
         notes.append(f"{name} on {target.name}")
 
     def shield_value(self, context: "SkillContext", target: Fighter) -> float:

@@ -17,7 +17,16 @@ gives the head Digestion: DigestionStrengthFormula of damage it absorbs, for Dig
 that empties it spits the champion out (DigestionRemovingProcessor, cause Destroyed); running out of turns kills it
 (cause Expired). A head that dies or turns into its neck releases the champion when the Devoured status is linked to
 its producer (StatusEffectParams.UnapplyWhenProducerDied, UnapplyAllEffects 0x182E0F820). Knowledge files without the
-digestion formulas leave Feast and Ravening out. Wrath's hit counter is listed under `not_simulated`.
+digestion formulas leave Feast and Ravening out.
+
+Wrath (build 2026-10-19 data). Spite Lash places the HydraHitCounter status on the head; the status's own effect adds 1
+for every hit on its holder (BeforeDamageDealt; not damage over time, relationDamageIsNotHit; not while it has
+BloodRage, the Vengeance buff). After a hit, SetHydraHitCounter takes 15 off a counter at 15 or more and sets off
+Vengeance: BloodRage (its damage x4), Block Debuffs and Reflect Damage 15% on the head for 1 turn, then a 3x ATK hit on
+every champion. Death Throes: a Wrath head at 0 HP hits every other head (5x ATK, 10x and a 25% Leech under Vengeance).
+
+Mischief. Its ChangeSkillTarget passive (BeforeSkillProcessed, 75%) sends a champion's skill aimed at it to a random
+other head, when the skill has a damage effect on its chosen target and the head isn't Hexed (Mark_KindId).
 """
 
 from __future__ import annotations
@@ -35,12 +44,9 @@ HYDRA_DIFFICULTIES = ["Normal", "Hard", "Brutal", "Nightmare"]
 HYDRA_TEAM_SIZE = 6
 # Used only when the knowledge file has no Hydra turn limit (BattleSettings.SpecificMaxTurnsInBattleByArea).
 ASSUMED_TURN_LIMIT = 300
-# Head skills the simulator leaves out, and why. Death Throes targets "AllAllies except Producer", and which side that
-# means when a champion's hit sets it off isn't read from the game's code yet. Feast and Ravening are left out only when
-# the knowledge file lacks Devour's digestion formulas (DEVOUR_SKIPS).
-SKIPPED_HEAD_SKILLS = {
-    "Death Throes [P]": "which side it hits when a champion decapitates the head isn't read yet",
-}
+# Head skills the simulator leaves out, and why. Feast and Ravening are left out only when the knowledge file lacks
+# Devour's digestion formulas (DEVOUR_SKIPS).
+SKIPPED_HEAD_SKILLS: dict[str, str] = {}
 DEVOUR_SKIPS = {
     "Feast": "Devour: this knowledge file has no digestion formulas (run refresh_knowledge)",
     "Ravening [P]": "Hunger counters: they only matter for Feast",
@@ -54,6 +60,9 @@ ASSUMED_DEVOUR_GAP = 1
 # Blight = Poison, Suffering = Tank, Mischief = Thief, Wrath = Berserk. The type id also names the affinity.
 HEAD_BRAINS = ((26040, 26070, "Heal"), (26080, 26110, "Ghost"), (26120, 26150, "Poison"), (26160, 26190, "Tank"),
                (26200, 26230, "Thief"), (26240, 26270, "Berserk"))
+# Wrath's hit counter status, and the buff that stops it counting (the HydraHitCounter status's own condition).
+HIT_COUNTER = "HydraHitCounter"
+VENGEANCE = "BloodRage"
 
 
 class HydraSimulator(Simulator):
@@ -176,7 +185,7 @@ class HydraSimulator(Simulator):
 class HydraBattle(Battle):
     """One Hydra battle: champions hit the first standing head in the focus order; heads pick champions with the Clever brain."""
 
-    encounter_kinds = frozenset({"PlaceHungerCounter", "SetHungerCounter"})
+    encounter_kinds = frozenset({"PlaceHungerCounter", "SetHungerCounter", "ApplyCounter", "SetHydraHitCounter"})
 
     def __init__(self, sim: HydraSimulator, fighters: list[Fighter], seed: int, record: bool, focus: list[str]):
         super().__init__(sim, fighters, seed, record)
@@ -190,6 +199,9 @@ class HydraBattle(Battle):
         self.devours: list[dict[str, Any]] = []
         self.absorbed = 0.0
         self.feast_target: Fighter | None = None
+        self.vengeances: list[dict[str, Any]] = []
+        self.redirects = 0
+        self.over_time = False  # damage over time is landing: not a hit for Wrath's counter
 
     def take_turn(self, actor: Fighter) -> None:
         self.turn_count += 1
@@ -219,6 +231,8 @@ class HydraBattle(Battle):
             "decapitations": self.decapitations,
             "devours": self.devours,
             "absorbed": round(self.absorbed),
+            "vengeances": self.vengeances,
+            "redirects": self.redirects,
             "deaths": self.deaths,
             "tallies": self.tallies,
             "hits": self.hits,
@@ -243,6 +257,9 @@ class HydraBattle(Battle):
         if name == "heroIdWithHungerCounter":
             holder = self.hunger_holder()
             return float(self.fighters.index(holder) + 1) if holder else 0.0
+        if name == "hydraHitCounterStackCount":
+            counter = self.hit_counter(owner)
+            return counter.value if counter else 0.0
         return super().encounter_value(name, owner)
 
     def encounter_call(self, name: str, args: list[Any], resolver: Resolver) -> float | None:
@@ -346,6 +363,63 @@ class HydraBattle(Battle):
             self.spat_out[victim.name] = self.turn_count
         return victim
 
+    # Wrath
+
+    def hit_counter(self, fighter: Fighter) -> Status | None:
+        return next((s for s in fighter.statuses if s.name == HIT_COUNTER), None)
+
+    def apply_counter(self, effect: dict[str, Any], context: sim_core.SkillContext) -> None:
+        """Spite Lash's ApplyCounter: the counter on the head at the start of the battle (RoundStarted), and on a Wrath
+        head as it grows (HydraHeadGrown, producerIsRelatedEffectTarget). A head that has one keeps its count."""
+        if not any(s["name"] == HIT_COUNTER for s in effect.get("statuses") or []):
+            self.sim.miss(context.actor, f"{context.skill.name}: ApplyCounter of another status")
+            return
+        head = context.actor if effect.get("target") == "Owner" else context.chosen
+        if head is not context.actor or self.hit_counter(head) is not None:
+            return
+        head.statuses.append(Status(HIT_COUNTER, -1, head, False, 0.0, special=True))
+
+    def set_hit_counter(self, effect: dict[str, Any], context: sim_core.SkillContext, notes: list[str]) -> None:
+        """SetHydraHitCounter after a hit: at 15 or more, 15 comes off and the effects tied to it (Vengeance: BloodRage,
+        Block Debuffs, Reflect Damage on the head, then a hit on every champion) go off."""
+        head = context.actor
+        counter = self.hit_counter(head)
+        if counter is None or not self.condition_holds(effect, context, head):
+            return
+        value = self.value(effect, context, head)
+        if value is None:
+            return
+        self.count_use(head, effect)
+        counter.value = float(max(int(value), 0))
+        self.vengeances.append({"head": head.name, "turn": self.turn_count})
+        notes.append(f"{head.name}: Vengeance")
+        self.fire(head, {"AfterEffectProcessed"}, notes, kinds={effect["kind"]}, related_effect=effect)
+
+    # Mischief
+
+    def redirect(self, actor: Fighter, skill: sim_core.Skill, chosen: Fighter) -> Fighter:
+        """Mischief's ChangeSkillTarget (BeforeSkillProcessed): a champion's skill aimed at the head, with a damage effect
+        on its chosen target, goes to a random other standing head at the passive's chance, unless the head is Hexed."""
+        passive = next((p for p in chosen.passives if p["kind"] == "ChangeSkillTarget"), None)
+        if passive is None or actor.side != "team" or chosen.has("Mark"):
+            return chosen
+        if not any(e["kind"] == "Damage" and e.get("target") == "Target" and not e.get("passive") for e in skill.effects):
+            return chosen
+        others = [f for f in self.fighters if f.side == chosen.side and f.alive and f is not chosen]
+        chance = passive.get("chance")
+        if not others or (chance is not None and self.rng.random() >= chance):
+            return chosen
+        self.redirects += 1
+        return self.rng.choice(others)
+
+    def receive_fixed(self, target: Fighter, producer: Fighter | None, amount: float, related_status: str,
+                      scales_by_hp: bool) -> float:
+        self.over_time = True
+        try:
+            return super().receive_fixed(target, producer, amount, related_status, scales_by_hp)
+        finally:
+            self.over_time = False
+
     def choose_skill(self, actor: Fighter) -> sim_core.Skill | None:
         feast = next((s for s in actor.skills if "Devour" in s.kinds()), None)
         if feast is not None and not self.digesting(actor) and not actor.has("Provoke") and not actor.has("BlockActiveSkills"):
@@ -410,12 +484,16 @@ class HydraBattle(Battle):
         for name in self.focus:
             head = next((e for e in alive if e.name.lower() == name), None)
             if head is not None:
-                return head
-        return alive[0]
+                return self.redirect(actor, skill, head)
+        return self.redirect(actor, skill, alive[0])
 
     def receive(self, target: Fighter, dealer: Fighter | None, amount: float) -> float:
         """A digesting head's Digestion absorbs damage first (DigestionProcessor, an AbsorbDamageProcessor); once it is
-        empty the champion inside is spat out (cause Destroyed). Absorbed damage takes no HP, so it doesn't score."""
+        empty the champion inside is spat out (cause Destroyed). Absorbed damage takes no HP, so it doesn't score.
+        A hit (not damage over time) on a head with Wrath's counter adds 1 to it, unless the head has Vengeance."""
+        counter = self.hit_counter(target) if not self.over_time and target.alive else None
+        if counter is not None and not any(s.name == VENGEANCE for s in target.statuses):
+            counter.value += 1
         digestion = next((s for s in target.statuses if s.name == "Digestion"), None)
         if digestion is not None and amount > 0 and not target.has("BlockDamage"):
             absorbed = min(digestion.value, amount)
@@ -465,6 +543,12 @@ class HydraBattle(Battle):
             return
         if effect["kind"] == "Devour":
             self.devour(effect, context, notes)
+            return
+        if effect["kind"] == "ApplyCounter":
+            self.apply_counter(effect, context)
+            return
+        if effect["kind"] == "SetHydraHitCounter":
+            self.set_hit_counter(effect, context, notes)
             return
         if effect["kind"] != "GrowHydraHead":
             super().apply_effect(effect, context, allies, enemies, notes)
@@ -564,6 +648,8 @@ def simulate_hydra(knowledge: Any, roster: dict[str, Any], team: list[dict[str, 
         "decapitations": {head: {"runs": len(turns), "mean_turn": round(statistics.mean(turns), 1)}
                           for head, turns in decapitations.items()},
         "devours": devour_summary(results, runs) if sim.devour else None,
+        "wrath_vengeance_per_battle": round(sum(len(r["vengeances"]) for r in results) / runs, 2),
+        "mischief_redirects_per_battle": round(sum(r["redirects"] for r in results) / runs, 2),
         "first_death": sim_core.summarize_deaths(results),
         "debuffs": {name: {"attempted": t.attempted, "landed": t.landed, "resisted": t.resisted,
                            "chance_failed": t.missed_chance, "immune": t.blocked,
@@ -614,9 +700,13 @@ def hydra_assumptions(sim: HydraSimulator, assumed_limit: bool, limit: int, defa
          "so long battles read low. Run refresh_knowledge."),
         devour_note(sim),
         "Champions attack the first standing head in the focus order (then the first standing head); a Provoked champion "
-        "attacks its provoker. Heads use their skills newest-first with their own AI rules from the game's code "
-        "(Mischief uses A2 only with a buff other than Share Damage on it; Decay's A3 goes to the most injured head). "
-        "Which champion a head attacks comes from the game's shared AI scoring, which isn't modelled yet: random.",
+        "attacks its provoker. Mischief sends 75% of single-target attacks aimed at it to a random other head unless it "
+        "is Hexed. Heads use their skills newest-first with their own AI rules from the game's code (Mischief uses A2 "
+        "only with a buff other than Share Damage on it; Decay's A3 goes to the most injured head), and pick which "
+        "champion to hit with the game's shared Clever brain scoring (damage estimated as normal hits).",
+        "Wrath counts every hit on it (not poison or HP Burn, not while under Vengeance); at 15 it takes Vengeance "
+        "and hits every champion. A decapitated Wrath hits the other heads (Death Throes); that damage is the head's, "
+        "so it isn't counted in the team's score (assumed).",
         f"The battle ends after {limit} turns by anyone, when every head is down, or when the team is dead"
         + (" (turn limit assumed: this knowledge file has none for Hydra)." if assumed_limit else "."),
     ]
@@ -628,8 +718,7 @@ def hydra_assumptions(sim: HydraSimulator, assumed_limit: bool, limit: int, defa
 
 def devour_note(sim: HydraSimulator) -> str:
     if not sim.devour:
-        return ("Feast never swallows anyone: this knowledge file has no digestion formulas (run refresh_knowledge). "
-                "Wrath's hit counter isn't modelled yet.")
+        return "Feast never swallows anyone: this knowledge file has no digestion formulas (run refresh_knowledge)."
     release = ("A head that dies or turns into its neck frees the champion inside (assumed: this knowledge file doesn't "
                "say whether Devoured is linked to its head)." if sim.release_assumed else
                "A head that dies or turns into its neck frees the champion inside." if sim.release_on_head_death else
@@ -639,4 +728,4 @@ def devour_note(sim: HydraSimulator) -> str:
             "weighted by CRIT DMG) counts down on each Ravening head's turn, and a head that isn't digesting swallows "
             "the champion at 0. Digestion absorbs damage on the head (it doesn't score) until it breaks and the champion "
             "is spat out, or runs out of turns and the champion dies. " + release + " A swallowed or digested champion "
-            "can't be revived (digested: assumed). Wrath's hit counter isn't modelled yet.")
+            "can't be revived (digested: assumed).")

@@ -297,3 +297,98 @@ def test_decays_third_skill_goes_to_the_most_injured_head(knowledge):
     torment.hp = torment.max_hp * 0.4
     ward = battle_sim.Skill("A3", "Rotten Ward", 2604, 5, 0, "AliveAllies", [effect("ApplyBuff", "Target")])
     assert battle.pick_target(decay, ward, [decay, torment], [champion]) is torment
+
+
+def with_wrath(knowledge):
+    """Torment gets Wrath's Spite Lash (the game data's effects) and Death Throes, and the HydraHitCounter and BloodRage
+    status types."""
+    after_set = {"effect_id": 2624056, "kinds": [], "phases": ["AfterEffectProcessed"]}
+    knowledge.raw["skills"]["2607"] = skill("Spite Lash [P]", targets=None, effects=[
+        {**effect("ApplyCounter", "Owner", statuses=[("HydraHitCounter", -1)]), "id": 2624051, "passive": True,
+         "relation": {"effect_id": None, "kinds": [], "phases": ["RoundStarted"]}},
+        {**effect("ApplyBuff", "Owner", statuses=[("BloodRage", 1)]), "id": 2624052, "passive": True, "relation": after_set},
+        {**effect("Damage", "AllEnemies", "3*ATK"), "id": 2624055, "passive": True, "relation": after_set},
+        {**effect("SetHydraHitCounter", "Producer", "hydraHitCounterStackCount-15",
+                  condition="hydraHitCounterStackCount>=15"), "id": 2624056, "passive": True,
+         "relation": {"effect_id": None, "kinds": ["AoEContinuousDamage", "Damage"], "phases": ["AfterEffectProcessed"]}},
+    ])
+    knowledge.raw["skills"]["2608"] = skill("Death Throes [P]", targets=None, effects=[
+        {**effect("Damage", "AllAllies", "5*ATK",
+                  condition="CUR_HP==0&&!OwnerHasEffectOfKind(StatusChangeDamageMultiplier_KindId)&&canUniqueApplyForTurn"),
+         "exclude": "Producer", "id": 2624041, "passive": True,
+         "relation": {"effect_id": None, "kinds": [], "phases": ["AfterDamageDealt"]}},
+    ])
+    torment = next(t for t in knowledge.raw["champion_types"] if t["type_id"] == 26090)
+    torment["skill_ids"] += [2607, 2608]
+    statuses = knowledge.raw.setdefault("status_effects", {})
+    statuses["BloodRage"] = {"id": 650, "effect": {"kind": "StatusChangeDamageMultiplier", "multiplier": "4",
+                                                   "condition": "isOwnerProduceRelatedEffect", "target": "Owner",
+                                                   "relation": {"kinds": ["Damage"], "phases": ["BeforeDamageCalculated"]}}}
+
+
+def wrath_battle(knowledge):
+    with_wrath(knowledge)
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    fighters = sim.fresh_copy(sim.team_fighters(team("Poisoner")) + heads)
+    battle = hydra_sim.HydraBattle(sim, fighters, 1, record=False, focus=["Head of Torment"])
+    for fighter in fighters:
+        battle.fire(fighter, battle_sim.BATTLE_START_PHASES, [])
+    return battle, fighters
+
+
+def jab(battle, hero, head):
+    battle.turn_owner = hero
+    battle.unique_applied.clear()
+    context = battle_sim.SkillContext(hero, hero.skills[0], head)
+    battle.apply_effect(hero.skills[0].effects[0], context, [hero], [f for f in battle.fighters if f.side == "enemy"], [])
+
+
+def test_wrath_counts_hits_and_takes_vengeance_at_15(knowledge):
+    battle, (hero, decay, torment) = wrath_battle(knowledge)
+    counter = battle.hit_counter(torment)
+    assert counter is not None and counter.value == 0
+    counter.value = 13
+    jab(battle, hero, torment)
+    assert counter.value == 14 and not battle.vengeances
+    before = hero.hp
+    jab(battle, hero, torment)
+    assert counter.value == 0
+    assert [v["head"] for v in battle.vengeances] == ["Head of Torment"]
+    assert torment.has("BloodRage") and hero.hp < before
+    # A buff its passive placed during the champion's turn lasts through the head's next turn.
+    assert not next(s for s in torment.statuses if s.name == "BloodRage").fresh
+    jab(battle, hero, torment)
+    assert counter.value == 0  # hits under Vengeance don't count
+
+
+def test_damage_over_time_doesnt_count_as_a_hit(knowledge):
+    battle, (hero, decay, torment) = wrath_battle(knowledge)
+    battle.receive_fixed(torment, hero, 100, related_status="ContinuousDamage5p", scales_by_hp=False)
+    assert battle.hit_counter(torment).value == 0
+
+
+def test_death_throes_hits_the_other_heads_and_not_the_score(knowledge):
+    battle, (hero, decay, torment) = wrath_battle(knowledge)
+    torment.hp = 1
+    jab(battle, hero, torment)
+    battle.settle_deaths()
+    assert not torment.alive
+    assert decay.hp < decay.max_hp
+    assert battle.taken.get("Head of Decay", 0) == 0
+
+
+def test_mischief_sends_single_target_attacks_to_another_head(knowledge):
+    sim = hydra_sim.HydraSimulator(knowledge, STATE)
+    heads = sim.head_fighters(sim.hydra_stage("Normal", None)["stage"])
+    hero, decay, torment = sim.fresh_copy(sim.team_fighters(team("Poisoner")) + heads)
+    battle = hydra_sim.HydraBattle(sim, [hero, decay, torment], 1, record=False, focus=["Head of Torment"])
+    torment.passives.append({**effect("ChangeSkillTarget", "RandomAlly", chance=1.0), "exclude": "Producer",
+                             "passive": True, "relation": {"effect_id": None, "kinds": [], "phases": ["BeforeSkillProcessed"]}})
+    assert battle.pick_target(hero, hero.skills[0], [hero], [decay, torment]) is decay
+    assert battle.redirects == 1
+    torment.statuses.append(battle_sim.Status("Mark", 2, hero, False))
+    assert battle.pick_target(hero, hero.skills[0], [hero], [decay, torment]) is torment
+    aoe = battle_sim.Skill("A2", "Sweep", 99, 3, 0, "AliveEnemies", [effect("Damage", "AllEnemies", "1*ATK")])
+    torment.statuses.clear()
+    assert battle.pick_target(hero, aoe, [hero], [decay, torment]) is torment
